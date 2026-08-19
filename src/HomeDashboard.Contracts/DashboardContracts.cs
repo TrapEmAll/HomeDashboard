@@ -15,12 +15,35 @@ public sealed record AgentSnapshot(
 public sealed record ServiceCard(
     string Id,
     string Name,
+    ServiceKind Kind,
     string Description,
     Uri? Url,
     ServiceStatus Status,
     bool RestartEnabled,
     DateTimeOffset? LastCheckedAt,
-    string? StatusMessage);
+    string? StatusMessage,
+    IReadOnlyList<ServiceMetric> Metrics);
+
+public sealed record ServiceMetric(
+    string Label,
+    string Value);
+
+public enum ServiceKind
+{
+    Generic,
+    Plex,
+    Sonarr,
+    Radarr,
+    Lidarr,
+    Readarr,
+    Prowlarr,
+    Bazarr,
+    qBittorrent,
+    SABnzbd,
+    Jellyfin,
+    GameServer,
+    FileShare
+}
 
 public enum ServiceStatus
 {

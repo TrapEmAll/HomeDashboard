@@ -154,6 +154,30 @@ button {
   line-height: 1.4;
 }
 
+.metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kind-chip,
+.metric-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #52616f;
+  background: #f3f6f8;
+  font-size: 12px;
+}
+
+.kind-chip {
+  color: #24445f;
+  background: #e8f1f8;
+}
+
 .service-actions {
   display: flex;
   gap: 8px;

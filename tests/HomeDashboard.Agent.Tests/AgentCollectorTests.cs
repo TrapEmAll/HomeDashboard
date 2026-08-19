@@ -32,6 +32,6 @@ public sealed class AgentCollectorTests
     private sealed class StubServiceCollector : IWindowsServiceSnapshotCollector
     {
         public IReadOnlyList<ServiceCard> Collect()
-            => [new("plex", "Plex", "Media server", null, ServiceStatus.Online, false, DateTimeOffset.UtcNow, null)];
+            => [new("plex", "Plex", ServiceKind.Plex, "Media server", null, ServiceStatus.Online, false, DateTimeOffset.UtcNow, null, [])];
     }
 }

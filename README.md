@@ -57,12 +57,15 @@ Set `Agent:DashboardApiUrl` and `Agent:ApiKey` so the agent can authenticate to 
 
 ## Configuration
 
-Edit `src/HomeDashboard.Api/appsettings.json` to define service cards, RSS sources, and API keys. Restart controls are intentionally stubbed behind an explicit endpoint contract until command authorization, allowlisting, and audit logging are added.
+Edit `src/HomeDashboard.Api/appsettings.json` to define service cards, RSS sources, API keys, and service integrations. Supported service kinds include Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks.
+
+Restart controls are intentionally stubbed behind an explicit endpoint contract until command authorization, allowlisting, and audit logging are added.
 
 ## MVP boundaries
 
 - Service and system data are shaped around real contracts, but the API currently uses local/configured providers.
 - Agent snapshots are accepted with API-key authentication and stored in memory as the latest status for the configured `DefaultAgentId`.
+- First-class service checks report status and metric chips for Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin when their URLs/API keys are configured.
 - RSS support fetches configured feeds and parses common RSS/Atom fields.
 - The agent reads configured Windows service states, collects system stat placeholders, and posts snapshots to the API.
 - Restart endpoints return `202 Accepted` with a queued status placeholder.

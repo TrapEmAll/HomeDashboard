@@ -1,5 +1,20 @@
 export type ServiceStatus = "Unknown" | "Online" | "Degraded" | "Offline";
 
+export type ServiceKind =
+  | "Generic"
+  | "Plex"
+  | "Sonarr"
+  | "Radarr"
+  | "Lidarr"
+  | "Readarr"
+  | "Prowlarr"
+  | "Bazarr"
+  | "qBittorrent"
+  | "SABnzbd"
+  | "Jellyfin"
+  | "GameServer"
+  | "FileShare";
+
 export interface DashboardSnapshot {
   generatedAt: string;
   services: ServiceCard[];
@@ -10,12 +25,19 @@ export interface DashboardSnapshot {
 export interface ServiceCard {
   id: string;
   name: string;
+  kind: ServiceKind;
   description: string;
   url?: string | null;
   status: ServiceStatus;
   restartEnabled: boolean;
   lastCheckedAt?: string | null;
   statusMessage?: string | null;
+  metrics: ServiceMetric[];
+}
+
+export interface ServiceMetric {
+  label: string;
+  value: string;
 }
 
 export interface SystemStats {

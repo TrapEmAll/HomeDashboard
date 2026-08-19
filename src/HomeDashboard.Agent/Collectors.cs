@@ -93,23 +93,27 @@ public sealed class WindowsServiceSnapshotCollector(IOptions<AgentOptions> optio
         => new(
             service.Id,
             service.DisplayName,
+            ServiceKind.Generic,
             service.ServiceName,
             null,
             ToDashboardStatus(controller.Status),
             service.RestartEnabled,
             DateTimeOffset.UtcNow,
-            $"Windows service status is {controller.Status}.");
+            $"Windows service status is {controller.Status}.",
+            [new ServiceMetric("Windows", controller.Status.ToString())]);
 
     private static ServiceCard ToUnavailableCard(WindowsServiceMonitor service, string message)
         => new(
             service.Id,
             service.DisplayName,
+            ServiceKind.Generic,
             service.ServiceName,
             null,
             ServiceStatus.Unknown,
             service.RestartEnabled,
             DateTimeOffset.UtcNow,
-            message);
+            message,
+            []);
 
     [SupportedOSPlatform("windows")]
     private static ServiceStatus ToDashboardStatus(ServiceControllerStatus status)

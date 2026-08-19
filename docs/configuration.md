@@ -23,6 +23,82 @@
 
 Use stable lowercase IDs because restart commands and future agent mappings will target those IDs.
 
+## Service integrations
+
+Each service supports a `Kind` value. `Generic` uses only `HealthUrl`; first-class integrations use their native APIs and show metric chips in the dashboard.
+
+Supported kinds:
+
+- `Plex`
+- `Sonarr`
+- `Radarr`
+- `Lidarr`
+- `Readarr`
+- `Prowlarr`
+- `Bazarr`
+- `qBittorrent`
+- `SABnzbd`
+- `Jellyfin`
+- `GameServer`
+- `FileShare`
+- `Generic`
+
+Example *arr app:
+
+```json
+{
+  "Id": "radarr",
+  "Name": "Radarr",
+  "Kind": "Radarr",
+  "Description": "Movie library automation",
+  "Url": "http://server-pc:7878",
+  "HealthUrl": "http://server-pc:7878/ping",
+  "ApiKey": "radarr-api-key",
+  "RestartEnabled": false
+}
+```
+
+If an *arr API key is omitted, HomeDashboard falls back to the configured `HealthUrl`.
+
+Example Plex:
+
+```json
+{
+  "Id": "plex",
+  "Name": "Plex",
+  "Kind": "Plex",
+  "Description": "Media server",
+  "Url": "http://server-pc:32400/web",
+  "ApiKey": "optional-plex-token",
+  "RestartEnabled": false
+}
+```
+
+Example download clients:
+
+```json
+{
+  "Id": "qbittorrent",
+  "Name": "qBittorrent",
+  "Kind": "qBittorrent",
+  "Description": "Torrent download client",
+  "Url": "http://server-pc:8080",
+  "RestartEnabled": false
+}
+```
+
+```json
+{
+  "Id": "sabnzbd",
+  "Name": "SABnzbd",
+  "Kind": "SABnzbd",
+  "Description": "Usenet download client",
+  "Url": "http://server-pc:8085",
+  "ApiKey": "optional-sabnzbd-api-key",
+  "RestartEnabled": false
+}
+```
+
 ## Authentication
 
 All dashboard API routes under `/api` require an API key in the `X-HomeDashboard-Key` header.

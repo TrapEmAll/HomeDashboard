@@ -1,3 +1,5 @@
+using HomeDashboard.Contracts;
+
 namespace HomeDashboard.Api;
 
 public sealed class DashboardOptions
@@ -11,9 +13,11 @@ public sealed class ServiceDefinition
 {
     public required string Id { get; init; }
     public required string Name { get; init; }
+    public ServiceKind Kind { get; init; } = ServiceKind.Generic;
     public string Description { get; init; } = "";
     public Uri? Url { get; init; }
     public Uri? HealthUrl { get; init; }
+    public string? ApiKey { get; init; }
     public bool RestartEnabled { get; init; }
 }
 

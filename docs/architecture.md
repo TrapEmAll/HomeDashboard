@@ -10,7 +10,7 @@ Browser
     v
 Dashboard API
   ASP.NET Core minimal API
-  service cards, health checks, RSS news, system stats facade, API-key auth
+  service cards, native service checks, RSS news, system stats facade, API-key auth
     |
     | X-HomeDashboard-Key
     v
@@ -39,9 +39,11 @@ Configured services support:
 - A display name and description.
 - A quick-link URL.
 - An optional health URL.
+- A service kind for native checks.
+- An optional native API key.
 - A restart-enabled flag.
 
-The API maps successful health responses to `Online`, 5xx responses to `Degraded`, network failures to `Offline`, and missing health URLs to `Unknown`.
+The API maps successful health/native responses to `Online`, 5xx responses to `Degraded`, network failures to `Offline`, and missing health URLs to `Unknown`. Native checks currently cover Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin.
 
 ## News
 

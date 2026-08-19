@@ -1,4 +1,4 @@
-import { ExternalLink, RotateCcw } from "lucide-react";
+import { ExternalLink, RotateCcw, Server } from "lucide-react";
 import type { ServiceCard, ServiceStatus } from "../types/dashboard";
 
 interface Props {
@@ -31,6 +31,17 @@ export function ServiceGrid({ services, onRestart }: Props) {
               <p>{service.description}</p>
             </div>
             <div className="service-meta">{service.statusMessage ?? "Waiting for check."}</div>
+            <div className="metric-strip">
+              <span className="kind-chip">
+                <Server size={13} />
+                {service.kind}
+              </span>
+              {service.metrics.map((metric) => (
+                <span className="metric-chip" key={`${service.id}-${metric.label}`}>
+                  {metric.label}: {metric.value}
+                </span>
+              ))}
+            </div>
             <div className="service-actions">
               {service.url ? (
                 <a className="icon-button" href={service.url} target="_blank" rel="noreferrer" title="Open service">

@@ -3,7 +3,7 @@
 ## MVP
 
 - Configurable service cards.
-- Per-card health checks.
+- Per-card health checks and first-class checks for Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin.
 - Dashboard snapshot endpoint.
 - Local system stat placeholders.
 - RSS/Atom news feed aggregation.
