@@ -10,13 +10,13 @@ Browser
     v
 Dashboard API
   ASP.NET Core minimal API
-  service cards, health checks, RSS news, system stats facade
+  service cards, health checks, RSS news, system stats facade, API-key auth
     |
-    | future authenticated channel
+    | X-HomeDashboard-Key
     v
 Dashboard Agent
   .NET worker on the Windows services PC
-  Windows service/system/process collectors
+  Windows service status and system collectors
 
 Shared contracts
   DTOs used by API, agent, tests, and eventually generated web clients
@@ -24,10 +24,10 @@ Shared contracts
 
 ## Security model
 
-The MVP intentionally keeps restart controls as a contract and queue placeholder. Before real restarts are enabled, the project should add:
+The MVP requires an API key for all `/api` routes. Browser/dashboard calls use the dashboard key; agent calls to `/api/agent/*` use a separate agent key.
 
-- API authentication for browser access.
-- Agent authentication for API-to-agent calls.
+Restart controls remain a contract and queue placeholder. Before real restarts are enabled, the project should add:
+
 - An allowlist of restartable services.
 - An audit log for restart requests.
 - Confirmation UX for destructive or disruptive actions.
@@ -49,10 +49,8 @@ RSS and Atom feeds are configured in `appsettings.json`. The API fetches feeds s
 
 ## Agent roadmap
 
-The initial agent captures the shape of local collection. Next steps:
+The initial agent reads configured Windows service statuses and posts snapshots to the API with `X-HomeDashboard-Key`. Next steps:
 
-- Add `ServiceController` integration on Windows.
-- Report agent snapshots back to the API.
 - Add CPU counters with a platform-specific implementation.
 - Add remote restart command handling with signed requests.
 - Package as a Windows service.

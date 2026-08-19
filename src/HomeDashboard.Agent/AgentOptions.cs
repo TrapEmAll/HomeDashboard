@@ -2,7 +2,9 @@ namespace HomeDashboard.Agent;
 
 public sealed class AgentOptions
 {
+    public string AgentId { get; init; } = "server-pc";
     public Uri DashboardApiUrl { get; init; } = new("http://localhost:5000");
+    public string? ApiKey { get; init; }
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(30);
     public IReadOnlyList<WindowsServiceMonitor> WindowsServices { get; init; } = [];
 }

@@ -6,6 +6,12 @@ public sealed record DashboardSnapshot(
     SystemStats System,
     IReadOnlyList<NewsItem> News);
 
+public sealed record AgentSnapshot(
+    string AgentId,
+    DateTimeOffset CapturedAt,
+    SystemStats System,
+    IReadOnlyList<ServiceCard> Services);
+
 public sealed record ServiceCard(
     string Id,
     string Name,

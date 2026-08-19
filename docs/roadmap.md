@@ -8,16 +8,18 @@
 - Local system stat placeholders.
 - RSS/Atom news feed aggregation.
 - Restart command contract with guarded placeholder behavior.
-- Windows-focused agent skeleton.
+- Windows-focused agent with configured service status lookup.
+- API-key authentication for dashboard and agent connections.
+- Agent snapshot publishing and latest-snapshot dashboard usage.
 - React dashboard shell.
 - CI for .NET and web.
 
 ## Next
 
-- Agent registration and heartbeat endpoint.
+- Agent registration and heartbeat history.
 - Windows Service Control Manager integration.
 - Real CPU, RAM, disk, and process metrics.
-- User authentication.
+- User accounts or stronger local-network authentication.
 - Restart confirmation and audit log.
 - Docker container support.
 - SignalR live updates.

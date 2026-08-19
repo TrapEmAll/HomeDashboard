@@ -23,6 +23,41 @@
 
 Use stable lowercase IDs because restart commands and future agent mappings will target those IDs.
 
+## Authentication
+
+All dashboard API routes under `/api` require an API key in the `X-HomeDashboard-Key` header.
+
+API settings:
+
+```json
+{
+  "Security": {
+    "DashboardApiKey": "replace-with-a-dashboard-key",
+    "AgentApiKey": "replace-with-a-different-agent-key"
+  }
+}
+```
+
+Agent settings:
+
+```json
+{
+  "Agent": {
+    "DashboardApiUrl": "http://dashboard-pc:5000",
+    "ApiKey": "replace-with-the-agent-key"
+  }
+}
+```
+
+Web settings:
+
+```text
+VITE_API_BASE_URL=http://dashboard-pc:5000
+VITE_DASHBOARD_API_KEY=replace-with-the-dashboard-key
+```
+
+Use different dashboard and agent keys. The dashboard key can read normal dashboard endpoints; the agent key is accepted only for `/api/agent/*`.
+
 ## RSS feeds
 
 Add feeds under `Dashboard:NewsFeeds`:
@@ -49,6 +84,7 @@ VITE_API_BASE_URL=https://your-dashboard-api
 ```json
 {
   "Agent": {
+    "AgentId": "server-pc",
     "WindowsServices": [
       {
         "Id": "plex-service",
@@ -60,3 +96,5 @@ VITE_API_BASE_URL=https://your-dashboard-api
   }
 }
 ```
+
+The API uses `Dashboard:DefaultAgentId` to decide which agent snapshot should drive the dashboard's system stats.

@@ -31,21 +31,70 @@ public interface IRestartCoordinator
     RestartResult QueueRestart(string serviceId, RestartRequest request);
 }
 
+public interface IAgentSnapshotStore
+{
+    AgentSnapshot? GetLatest(string agentId);
+    void Save(AgentSnapshot snapshot);
+}
+
 public sealed class DashboardService(
     IServiceStatusProvider serviceStatusProvider,
     ISystemStatsProvider systemStatsProvider,
-    INewsProvider newsProvider) : IDashboardService
+    INewsProvider newsProvider,
+    IAgentSnapshotStore agentSnapshotStore,
+    IOptions<DashboardOptions> options) : IDashboardService
 {
     public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
         var servicesTask = serviceStatusProvider.GetServicesAsync(cancellationToken);
         var newsTask = newsProvider.GetNewsAsync(cancellationToken);
+        var latestAgent = agentSnapshotStore.GetLatest(options.Value.DefaultAgentId);
 
         return new DashboardSnapshot(
             DateTimeOffset.UtcNow,
-            await servicesTask,
-            systemStatsProvider.GetStats(),
+            MergeServices(await servicesTask, latestAgent?.Services),
+            latestAgent?.System ?? systemStatsProvider.GetStats(),
             await newsTask);
+    }
+
+    private static IReadOnlyList<ServiceCard> MergeServices(
+        IReadOnlyList<ServiceCard> configuredServices,
+        IReadOnlyList<ServiceCard>? agentServices)
+    {
+        if (agentServices is null || agentServices.Count == 0)
+        {
+            return configuredServices;
+        }
+
+        var merged = configuredServices.ToDictionary(service => service.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (var agentService in agentServices)
+        {
+            merged[agentService.Id] = agentService;
+        }
+
+        return merged.Values.OrderBy(service => service.Name).ToArray();
+    }
+}
+
+public sealed class InMemoryAgentSnapshotStore : IAgentSnapshotStore
+{
+    private readonly object gate = new();
+    private readonly Dictionary<string, AgentSnapshot> snapshots = new(StringComparer.OrdinalIgnoreCase);
+
+    public AgentSnapshot? GetLatest(string agentId)
+    {
+        lock (gate)
+        {
+            return snapshots.GetValueOrDefault(agentId);
+        }
+    }
+
+    public void Save(AgentSnapshot snapshot)
+    {
+        lock (gate)
+        {
+            snapshots[snapshot.AgentId] = snapshot;
+        }
     }
 }
 

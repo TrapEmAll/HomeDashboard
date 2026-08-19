@@ -4,6 +4,7 @@ public sealed class DashboardOptions
 {
     public IReadOnlyList<ServiceDefinition> Services { get; init; } = [];
     public IReadOnlyList<NewsFeedDefinition> NewsFeeds { get; init; } = [];
+    public string DefaultAgentId { get; init; } = "server-pc";
 }
 
 public sealed class ServiceDefinition

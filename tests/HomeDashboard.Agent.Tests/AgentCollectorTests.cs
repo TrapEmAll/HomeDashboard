@@ -1,5 +1,6 @@
 using HomeDashboard.Agent;
 using HomeDashboard.Contracts;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace HomeDashboard.Agent.Tests;
@@ -9,10 +10,14 @@ public sealed class AgentCollectorTests
     [Fact]
     public void Collect_combines_system_and_service_snapshots()
     {
-        var collector = new AgentCollector(new StubSystemCollector(), new StubServiceCollector());
+        var collector = new AgentCollector(
+            Options.Create(new AgentOptions { AgentId = "server-pc" }),
+            new StubSystemCollector(),
+            new StubServiceCollector());
 
         var snapshot = collector.Collect();
 
+        Assert.Equal("server-pc", snapshot.AgentId);
         Assert.Equal("server-pc", snapshot.System.Hostname);
         Assert.Single(snapshot.Services);
         Assert.Equal("plex", snapshot.Services[0].Id);
