@@ -5,22 +5,22 @@
 - Configurable service cards.
 - Per-card health checks and first-class checks for Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin.
 - Dashboard snapshot endpoint.
-- Local system stat placeholders.
+- Disk, memory, and sampled CPU stats.
 - RSS/Atom news feed aggregation.
-- Restart command contract with guarded placeholder behavior.
+- Persisted restart command queue with agent-side Windows service execution.
 - Windows-focused agent with configured service status lookup.
-- API-key authentication for dashboard and agent connections.
-- Agent snapshot publishing and latest-snapshot dashboard usage.
+- Browser password login, dashboard API key support, and separate agent API-key authentication.
+- Agent snapshot publishing, persisted heartbeat history, and latest-snapshot dashboard usage.
 - React dashboard shell.
+- Windows publish zip with API/agent executables and service installer helpers.
 - CI for .NET and web.
 
 ## Next
 
-- Agent registration and heartbeat history.
-- Windows Service Control Manager integration.
-- Real CPU, RAM, disk, and process metrics.
-- User accounts or stronger local-network authentication.
-- Restart confirmation and audit log.
+- Guided first-run setup and config editing UI.
+- Host-wide CPU counters instead of process CPU sampling.
+- User accounts, password hashing, or external identity provider support.
+- Restart confirmation, command audit log, and notifications.
 - Docker container support.
 - SignalR live updates.
 - Mobile layout refinements after real data is connected.

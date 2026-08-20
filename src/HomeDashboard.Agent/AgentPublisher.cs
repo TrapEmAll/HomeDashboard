@@ -7,6 +7,8 @@ namespace HomeDashboard.Agent;
 public interface IAgentPublisher
 {
     Task PublishAsync(AgentSnapshot snapshot, CancellationToken cancellationToken);
+    Task<AgentCommand?> GetNextCommandAsync(CancellationToken cancellationToken);
+    Task CompleteCommandAsync(AgentCommand command, AgentCommandCompletion completion, CancellationToken cancellationToken);
 }
 
 public sealed class AgentPublisher(
@@ -30,5 +32,41 @@ public sealed class AgentPublisher(
 
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<AgentCommand?> GetNextCommandAsync(CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient("dashboard-api");
+        using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/agent/{options.Value.AgentId}/commands/next");
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+        {
+            return null;
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AgentCommand>(cancellationToken);
+    }
+
+    public async Task CompleteCommandAsync(AgentCommand command, AgentCommandCompletion completion, CancellationToken cancellationToken)
+    {
+        var client = httpClientFactory.CreateClient("dashboard-api");
+        using var request = CreateAuthenticatedRequest(HttpMethod.Post, $"/api/agent/{options.Value.AgentId}/commands/{command.Id}/complete");
+        request.Content = JsonContent.Create(completion);
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
+    {
+        var apiKey = options.Value.ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            throw new InvalidOperationException("Agent:ApiKey must be configured before the agent can connect.");
+        }
+
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Add("X-HomeDashboard-Key", apiKey);
+        return request;
     }
 }

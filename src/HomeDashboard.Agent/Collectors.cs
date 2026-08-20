@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.ServiceProcess;
 using HomeDashboard.Contracts;
@@ -27,6 +28,9 @@ public interface ISystemSnapshotCollector
 
 public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 {
+    private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
+    private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+
     public SystemStats Collect()
     {
         var disks = DriveInfo
@@ -37,10 +41,28 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 
         return new SystemStats(
             Environment.MachineName,
-            0,
-            GetProcessMemoryPercent(),
+            GetProcessCpuPercent(),
+            GetMemoryUsedPercent(GetProcessMemoryPercent()),
             disks,
             DateTimeOffset.UtcNow);
+    }
+
+    private double GetProcessCpuPercent()
+    {
+        var process = Process.GetCurrentProcess();
+        var now = DateTimeOffset.UtcNow;
+        var processorTime = process.TotalProcessorTime;
+        var elapsed = (now - lastSampledAt).TotalMilliseconds;
+        var used = (processorTime - lastProcessorTime).TotalMilliseconds;
+        lastSampledAt = now;
+        lastProcessorTime = processorTime;
+
+        if (elapsed <= 0)
+        {
+            return 0;
+        }
+
+        return Math.Round(Math.Clamp(used / (elapsed * Environment.ProcessorCount) * 100, 0, 100), 1);
     }
 
     private static double GetProcessMemoryPercent()
@@ -52,6 +74,34 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
         }
 
         return Math.Round(Math.Clamp((double)Process.GetCurrentProcess().WorkingSet64 / memory.TotalAvailableMemoryBytes * 100, 0, 100), 1);
+    }
+
+    private static double GetMemoryUsedPercent(double fallback)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return fallback;
+        }
+
+        var status = new MemoryStatusEx();
+        return GlobalMemoryStatusEx(status) ? status.MemoryLoad : fallback;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx status);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private sealed class MemoryStatusEx
+    {
+        public uint Length = (uint)Marshal.SizeOf<MemoryStatusEx>();
+        public uint MemoryLoad;
+        public ulong TotalPhys;
+        public ulong AvailPhys;
+        public ulong TotalPageFile;
+        public ulong AvailPageFile;
+        public ulong TotalVirtual;
+        public ulong AvailVirtual;
+        public ulong AvailExtendedVirtual;
     }
 }
 

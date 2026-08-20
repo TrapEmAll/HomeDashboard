@@ -1,6 +1,6 @@
 # HomeDashboard
 
-HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. The MVP includes an ASP.NET Core API, a .NET worker agent, shared contracts, a React + TypeScript web shell, tests, docs, health checks, system-stat placeholders, configurable service cards, RSS news support, and extension points for guarded restart controls.
+HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, browser login, and guarded restart commands.
 
 ## Repository layout
 
@@ -12,6 +12,7 @@ src/
 web/                        React + TypeScript dashboard shell
 tests/                      .NET tests
 docs/                       Architecture and setup notes
+tools/                      Windows publishing and service installer helpers
 ```
 
 ## Quick start
@@ -19,21 +20,30 @@ docs/                       Architecture and setup notes
 ```powershell
 dotnet restore
 dotnet test
-dotnet run --project src/HomeDashboard.Api
+dotnet run --project src/HomeDashboard.Api --urls http://localhost:5000
 ```
 
-The API listens on the default ASP.NET Core ports and exposes:
+Open `http://localhost:5000` and sign in with `Security:DashboardPassword` from `src/HomeDashboard.Api/appsettings.json`.
+
+The API exposes:
 
 - `GET /health`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/session`
 - `GET /api/dashboard`
 - `GET /api/services`
 - `GET /api/system`
 - `GET /api/news`
 - `POST /api/agent/snapshot`
+- `GET /api/agents`
 - `GET /api/agent/{agentId}/latest`
+- `GET /api/agent/{agentId}/history`
+- `GET /api/agent/{agentId}/commands/next`
+- `POST /api/agent/{agentId}/commands/{commandId}/complete`
 - `POST /api/services/{id}/restart`
 
-All `/api` endpoints require `X-HomeDashboard-Key`. Dashboard/browser requests use `Security:DashboardApiKey`; agent requests to `/api/agent/*` use `Security:AgentApiKey`.
+Dashboard browser requests use an HttpOnly session cookie after login. Dashboard API-key access is still supported with `X-HomeDashboard-Key: Security:DashboardApiKey`. Agent snapshot and command endpoints require `Security:AgentApiKey`.
 
 The web app is a Vite React project:
 
@@ -45,7 +55,7 @@ npm run dev
 
 Node/npm are required for the frontend workflow.
 
-For local web configuration, copy `web/.env.example` to `web/.env` and set `VITE_DASHBOARD_API_KEY` to match the API's `Security:DashboardApiKey`.
+For local web configuration, copy `web/.env.example` to `web/.env` and set `VITE_API_BASE_URL` if the API is not running on the same origin.
 
 The agent posts snapshots to the API:
 
@@ -55,17 +65,30 @@ dotnet run --project src/HomeDashboard.Agent
 
 Set `Agent:DashboardApiUrl` and `Agent:ApiKey` so the agent can authenticate to the API. The default sample config uses matching local development keys only; change them before using this beyond a local machine.
 
+## Windows package
+
+Build the runnable Windows package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/publish-windows.ps1
+```
+
+The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
+
+- `api/HomeDashboard.Api.exe`, which serves the API and bundled web dashboard.
+- `agent/HomeDashboard.Agent.exe`, which reports Windows service/system state and runs queued restart commands.
+- `tools/install-api-service.ps1` and `tools/install-agent-service.ps1` for optional Windows service installation.
+
 ## Configuration
 
-Edit `src/HomeDashboard.Api/appsettings.json` to define service cards, RSS sources, API keys, and service integrations. Supported service kinds include Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks.
+Edit `src/HomeDashboard.Api/appsettings.json` to define browser auth, service cards, RSS sources, API keys, persisted state location, and service integrations. Supported service kinds include Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks.
 
-Restart controls are intentionally stubbed behind an explicit endpoint contract until command authorization, allowlisting, and audit logging are added.
+Restart controls queue commands for `Dashboard:DefaultAgentId`. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
 
 ## MVP boundaries
 
-- Service and system data are shaped around real contracts, but the API currently uses local/configured providers.
-- Agent snapshots are accepted with API-key authentication and stored in memory as the latest status for the configured `DefaultAgentId`.
+- Service and system data are shaped around shared contracts. The API merges configured app checks with the latest persisted agent snapshot.
+- Agent snapshots are accepted with API-key authentication, persisted to disk, and summarized with rolling history for the configured `DefaultAgentId`.
 - First-class service checks report status and metric chips for Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin when their URLs/API keys are configured.
 - RSS support fetches configured feeds and parses common RSS/Atom fields.
-- The agent reads configured Windows service states, collects system stat placeholders, and posts snapshots to the API.
-- Restart endpoints return `202 Accepted` with a queued status placeholder.
+- The agent reads configured Windows service states, collects disk/memory/sampled CPU stats, posts snapshots to the API, polls restart commands, and reports command completion.

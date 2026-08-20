@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using HomeDashboard.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace HomeDashboard.Api;
@@ -8,12 +9,16 @@ public sealed class DashboardSecurityOptions
 {
     public string? DashboardApiKey { get; init; }
     public string? AgentApiKey { get; init; }
+    public string? DashboardPassword { get; init; }
+    public string SessionCookieName { get; init; } = "HomeDashboard.Session";
+    public TimeSpan SessionDuration { get; init; } = TimeSpan.FromHours(12);
 }
 
 public interface IApiKeyValidator
 {
     bool IsDashboardKeyValid(string? apiKey);
     bool IsAgentKeyValid(string? apiKey);
+    bool IsDashboardPasswordValid(string? password);
 }
 
 public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) : IApiKeyValidator
@@ -23,6 +28,9 @@ public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) 
 
     public bool IsAgentKeyValid(string? apiKey)
         => IsValid(apiKey, options.Value.AgentApiKey);
+
+    public bool IsDashboardPasswordValid(string? password)
+        => IsValid(password, options.Value.DashboardPassword);
 
     private static bool IsValid(string? provided, string? expected)
     {
@@ -43,9 +51,77 @@ public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) 
     }
 }
 
+public interface IBrowserSessionStore
+{
+    AuthSession Create(out string token);
+    AuthSession Get(string? token);
+    void Remove(string? token);
+}
+
+public sealed class InMemoryBrowserSessionStore(IOptions<DashboardSecurityOptions> options) : IBrowserSessionStore
+{
+    private readonly object gate = new();
+    private readonly Dictionary<string, DateTimeOffset> sessions = new(StringComparer.Ordinal);
+
+    public AuthSession Create(out string token)
+    {
+        var tokenBytes = RandomNumberGenerator.GetBytes(32);
+        token = Convert.ToBase64String(tokenBytes);
+        var expiresAt = DateTimeOffset.UtcNow.Add(options.Value.SessionDuration);
+
+        lock (gate)
+        {
+            sessions[token] = expiresAt;
+        }
+
+        return new AuthSession(true, expiresAt);
+    }
+
+    public AuthSession Get(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return new AuthSession(false, null);
+        }
+
+        lock (gate)
+        {
+            if (!sessions.TryGetValue(token, out var expiresAt))
+            {
+                return new AuthSession(false, null);
+            }
+
+            if (expiresAt <= DateTimeOffset.UtcNow)
+            {
+                sessions.Remove(token);
+                return new AuthSession(false, null);
+            }
+
+            return new AuthSession(true, expiresAt);
+        }
+    }
+
+    public void Remove(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return;
+        }
+
+        lock (gate)
+        {
+            sessions.Remove(token);
+        }
+    }
+}
+
 public sealed class ApiKeyMiddleware(RequestDelegate next)
 {
-    public async Task InvokeAsync(HttpContext context, IApiKeyValidator validator)
+    public async Task InvokeAsync(
+        HttpContext context,
+        IApiKeyValidator validator,
+        IBrowserSessionStore sessions,
+        IOptions<DashboardSecurityOptions> options)
     {
         if (!context.Request.Path.StartsWithSegments("/api"))
         {
@@ -54,8 +130,9 @@ public sealed class ApiKeyMiddleware(RequestDelegate next)
         }
 
         var apiKey = context.Request.Headers["X-HomeDashboard-Key"].FirstOrDefault();
-        var isAgentEndpoint = context.Request.Path.StartsWithSegments("/api/agent");
-        var isValid = isAgentEndpoint ? validator.IsAgentKeyValid(apiKey) : validator.IsDashboardKeyValid(apiKey);
+        var isValid = RequiresAgentKey(context)
+            ? validator.IsAgentKeyValid(apiKey)
+            : validator.IsDashboardKeyValid(apiKey) || sessions.Get(context.Request.Cookies[options.Value.SessionCookieName]).IsAuthenticated;
 
         if (!isValid)
         {
@@ -65,5 +142,20 @@ public sealed class ApiKeyMiddleware(RequestDelegate next)
         }
 
         await next(context);
+    }
+
+    private static bool RequiresAgentKey(HttpContext context)
+    {
+        if (!context.Request.Path.StartsWithSegments("/api/agent"))
+        {
+            return false;
+        }
+
+        if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/api/agent/snapshot"))
+        {
+            return true;
+        }
+
+        return context.Request.Path.Value?.Contains("/commands", StringComparison.OrdinalIgnoreCase) == true;
     }
 }

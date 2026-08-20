@@ -7,6 +7,8 @@ public sealed class DashboardOptions
     public IReadOnlyList<ServiceDefinition> Services { get; init; } = [];
     public IReadOnlyList<NewsFeedDefinition> NewsFeeds { get; init; } = [];
     public string DefaultAgentId { get; init; } = "server-pc";
+    public string DataPath { get; init; } = "data/homedashboard-state.json";
+    public int AgentHistoryLimit { get; init; } = 120;
 }
 
 public sealed class ServiceDefinition

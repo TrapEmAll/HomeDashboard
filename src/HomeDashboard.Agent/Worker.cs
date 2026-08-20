@@ -7,6 +7,7 @@ namespace HomeDashboard.Agent;
 public sealed class Worker(
     IAgentCollector collector,
     IAgentPublisher publisher,
+    IAgentCommandExecutor commandExecutor,
     IOptions<AgentOptions> options,
     ILogger<Worker> logger) : BackgroundService
 {
@@ -27,6 +28,21 @@ public sealed class Worker(
             catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
             {
                 logger.LogWarning(ex, "Failed to publish agent snapshot to dashboard API.");
+            }
+
+            try
+            {
+                var command = await publisher.GetNextCommandAsync(stoppingToken);
+                if (command is not null)
+                {
+                    logger.LogInformation("Executing command {CommandId} for service {ServiceId}.", command.Id, command.ServiceId);
+                    var completion = commandExecutor.Execute(command);
+                    await publisher.CompleteCommandAsync(command, completion, stoppingToken);
+                }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+            {
+                logger.LogWarning(ex, "Failed to process agent command.");
             }
 
             await Task.Delay(options.Value.PollInterval, stoppingToken);

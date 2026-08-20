@@ -7,6 +7,8 @@ TestResults/
 coverage/
 node_modules/
 dist/
+outputs/
+src/HomeDashboard.Api/wwwroot/
 .env
 .env.*
 !.env.example

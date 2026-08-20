@@ -20,6 +20,15 @@ export interface DashboardSnapshot {
   services: ServiceCard[];
   system: SystemStats;
   news: NewsItem[];
+  agents: AgentSummary[];
+}
+
+export interface AgentSummary {
+  agentId: string;
+  hostname: string;
+  lastSeenAt: string;
+  status: ServiceStatus;
+  servicesMonitored: number;
 }
 
 export interface ServiceCard {

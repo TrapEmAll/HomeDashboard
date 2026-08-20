@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Xml.Linq;
 using HomeDashboard.Contracts;
@@ -36,7 +37,16 @@ public interface IRestartCoordinator
 public interface IAgentSnapshotStore
 {
     AgentSnapshot? GetLatest(string agentId);
+    IReadOnlyList<AgentSummary> GetAll();
+    IReadOnlyList<AgentHistoryPoint> GetHistory(string agentId);
     void Save(AgentSnapshot snapshot);
+}
+
+public interface IAgentCommandStore
+{
+    AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request);
+    AgentCommand? DequeueNext(string agentId);
+    void Complete(string agentId, string commandId, AgentCommandCompletion completion);
 }
 
 public sealed class DashboardService(
@@ -56,7 +66,8 @@ public sealed class DashboardService(
             DateTimeOffset.UtcNow,
             MergeServices(await servicesTask, latestAgent?.Services),
             latestAgent?.System ?? systemStatsProvider.GetStats(),
-            await newsTask);
+            await newsTask,
+            agentSnapshotStore.GetAll());
     }
 
     private static IReadOnlyList<ServiceCard> MergeServices(
@@ -78,16 +89,53 @@ public sealed class DashboardService(
     }
 }
 
-public sealed class InMemoryAgentSnapshotStore : IAgentSnapshotStore
+public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommandStore
 {
     private readonly object gate = new();
-    private readonly Dictionary<string, AgentSnapshot> snapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly JsonSerializerOptions serializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true
+    };
+    private readonly string statePath;
+    private readonly int historyLimit;
+    private DashboardState state;
+
+    public FileDashboardStateStore(IOptions<DashboardOptions> options)
+    {
+        statePath = Path.GetFullPath(options.Value.DataPath, AppContext.BaseDirectory);
+        historyLimit = Math.Max(options.Value.AgentHistoryLimit, 10);
+        state = Load();
+    }
 
     public AgentSnapshot? GetLatest(string agentId)
     {
         lock (gate)
         {
-            return snapshots.GetValueOrDefault(agentId);
+            return state.Snapshots.GetValueOrDefault(agentId);
+        }
+    }
+
+    public IReadOnlyList<AgentSummary> GetAll()
+    {
+        lock (gate)
+        {
+            return state.Snapshots.Values
+                .OrderBy(snapshot => snapshot.AgentId)
+                .Select(snapshot => new AgentSummary(
+                    snapshot.AgentId,
+                    snapshot.System.Hostname,
+                    snapshot.CapturedAt,
+                    snapshot.CapturedAt < DateTimeOffset.UtcNow.AddMinutes(-2) ? ServiceStatus.Degraded : ServiceStatus.Online,
+                    snapshot.Services.Count))
+                .ToArray();
+        }
+    }
+
+    public IReadOnlyList<AgentHistoryPoint> GetHistory(string agentId)
+    {
+        lock (gate)
+        {
+            return state.History.TryGetValue(agentId, out var history) ? history.ToArray() : [];
         }
     }
 
@@ -95,8 +143,135 @@ public sealed class InMemoryAgentSnapshotStore : IAgentSnapshotStore
     {
         lock (gate)
         {
-            snapshots[snapshot.AgentId] = snapshot;
+            state.Snapshots[snapshot.AgentId] = snapshot;
+            if (!state.History.TryGetValue(snapshot.AgentId, out var history))
+            {
+                history = [];
+                state.History[snapshot.AgentId] = history;
+            }
+
+            history.Add(new AgentHistoryPoint(
+                snapshot.AgentId,
+                snapshot.CapturedAt,
+                snapshot.System.CpuPercent,
+                snapshot.System.MemoryUsedPercent,
+                snapshot.Services.Count(service => service.Status == ServiceStatus.Online),
+                snapshot.Services.Count(service => service.Status == ServiceStatus.Degraded),
+                snapshot.Services.Count(service => service.Status == ServiceStatus.Offline)));
+
+            if (history.Count > historyLimit)
+            {
+                history.RemoveRange(0, history.Count - historyLimit);
+            }
+
+            SaveLocked();
         }
+    }
+
+    public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request)
+    {
+        var command = new AgentCommand(
+            Guid.NewGuid().ToString("n"),
+            agentId,
+            AgentCommandKind.RestartService,
+            serviceId,
+            request.RequestedBy,
+            request.Reason,
+            DateTimeOffset.UtcNow,
+            AgentCommandState.Queued);
+
+        lock (gate)
+        {
+            state.Commands.Add(command);
+            SaveLocked();
+        }
+
+        return command;
+    }
+
+    public AgentCommand? DequeueNext(string agentId)
+    {
+        lock (gate)
+        {
+            var command = state.Commands
+                .Where(candidate => candidate.AgentId.Equals(agentId, StringComparison.OrdinalIgnoreCase)
+                    && candidate.State == AgentCommandState.Queued)
+                .OrderBy(candidate => candidate.RequestedAt)
+                .FirstOrDefault();
+
+            if (command is null)
+            {
+                return null;
+            }
+
+            var running = command with { State = AgentCommandState.Running, Message = "Agent is running the command." };
+            ReplaceCommand(command.Id, running);
+            SaveLocked();
+            return running;
+        }
+    }
+
+    public void Complete(string agentId, string commandId, AgentCommandCompletion completion)
+    {
+        lock (gate)
+        {
+            var command = state.Commands.FirstOrDefault(candidate =>
+                candidate.AgentId.Equals(agentId, StringComparison.OrdinalIgnoreCase)
+                && candidate.Id.Equals(commandId, StringComparison.OrdinalIgnoreCase));
+            if (command is null)
+            {
+                return;
+            }
+
+            ReplaceCommand(command.Id, command with
+            {
+                State = completion.Succeeded ? AgentCommandState.Succeeded : AgentCommandState.Failed,
+                Message = completion.Message,
+                CompletedAt = DateTimeOffset.UtcNow
+            });
+            SaveLocked();
+        }
+    }
+
+    private DashboardState Load()
+    {
+        if (!File.Exists(statePath))
+        {
+            return new DashboardState();
+        }
+
+        try
+        {
+            var json = File.ReadAllText(statePath);
+            return JsonSerializer.Deserialize<DashboardState>(json, serializerOptions) ?? new DashboardState();
+        }
+        catch (JsonException)
+        {
+            return new DashboardState();
+        }
+    }
+
+    private void SaveLocked()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+        var json = JsonSerializer.Serialize(state, serializerOptions);
+        File.WriteAllText(statePath, json);
+    }
+
+    private void ReplaceCommand(string commandId, AgentCommand replacement)
+    {
+        var index = state.Commands.FindIndex(command => command.Id.Equals(commandId, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            state.Commands[index] = replacement;
+        }
+    }
+
+    private sealed class DashboardState
+    {
+        public Dictionary<string, AgentSnapshot> Snapshots { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<AgentHistoryPoint>> History { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<AgentCommand> Commands { get; init; } = [];
     }
 }
 
@@ -186,7 +361,8 @@ public sealed class ConfiguredServiceStatusProvider(
             var metrics = new List<ServiceMetric>();
             AddMetric(metrics, "Version", version);
             AddMetric(metrics, "Machine", Shorten(machine, 8));
-            return ToCard(service, ServiceStatus.Online, "Plex server identity responded.", metrics);
+            await AddPlexSessionsAsync(client, service, metrics, cancellationToken);
+            return ToCard(service, ServiceStatus.Online, "Plex server API responded.", metrics);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Xml.XmlException)
         {
@@ -223,7 +399,21 @@ public sealed class ConfiguredServiceStatusProvider(
             var metrics = new List<ServiceMetric>();
             AddMetric(metrics, "Version", version);
             AddMetric(metrics, "OS", os);
-            return ToCard(service, ServiceStatus.Online, $"{appName} API responded.", metrics);
+            var healthIssues = await CountJsonArrayAsync(client, service, "/api/v3/health", cancellationToken);
+            if (healthIssues is not null)
+            {
+                AddMetric(metrics, "Health Issues", healthIssues.Value.ToString());
+            }
+
+            var queueCount = await ReadJsonIntAsync(client, service, "/api/v3/queue/status", "totalCount", cancellationToken);
+            if (queueCount is not null)
+            {
+                AddMetric(metrics, "Queue", queueCount.Value.ToString());
+            }
+
+            var status = healthIssues > 0 ? ServiceStatus.Degraded : ServiceStatus.Online;
+            var message = healthIssues > 0 ? $"{appName} reported {healthIssues} health issue(s)." : $"{appName} API responded.";
+            return ToCard(service, status, message, metrics);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -240,11 +430,13 @@ public sealed class ConfiguredServiceStatusProvider(
         {
             var uri = BuildUri(service.Url!, "/api/v2/app/version");
             var version = await client.GetStringAsync(uri, cancellationToken);
+            var metrics = new List<ServiceMetric> { new("Version", version.Trim()) };
+            await AddQbittorrentTransferAsync(client, service, metrics, cancellationToken);
             return ToCard(
                 service,
                 ServiceStatus.Online,
                 "qBittorrent Web API responded.",
-                [new ServiceMetric("Version", version.Trim())]);
+                metrics);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
@@ -268,11 +460,14 @@ public sealed class ConfiguredServiceStatusProvider(
             var uri = BuildUri(service.Url!, "/api", query);
             var document = await client.GetFromJsonAsync<JsonDocument>(uri, cancellationToken);
             var version = ReadString(document!.RootElement, "version");
+            var metrics = new List<ServiceMetric>();
+            AddMetric(metrics, "Version", version);
+            await AddSabnzbdQueueAsync(client, service, metrics, cancellationToken);
             return ToCard(
                 service,
                 ServiceStatus.Online,
                 "SABnzbd API responded.",
-                string.IsNullOrWhiteSpace(version) ? [] : [new ServiceMetric("Version", version)]);
+                metrics);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -295,6 +490,7 @@ public sealed class ConfiguredServiceStatusProvider(
             var metrics = new List<ServiceMetric>();
             AddMetric(metrics, "Version", version);
             AddMetric(metrics, "Server", serverName);
+            await AddJellyfinSessionsAsync(client, service, metrics, cancellationToken);
             return ToCard(service, ServiceStatus.Online, "Jellyfin public system API responded.", metrics);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
@@ -312,6 +508,153 @@ public sealed class ConfiguredServiceStatusProvider(
         }
 
         return builder.Uri;
+    }
+
+    private static async Task AddPlexSessionsAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        ICollection<ServiceMetric> metrics,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(service.ApiKey))
+        {
+            return;
+        }
+
+        try
+        {
+            var uri = BuildUri(service.Url!, "/status/sessions", $"X-Plex-Token={Uri.EscapeDataString(service.ApiKey)}");
+            var xml = await client.GetStringAsync(uri, cancellationToken);
+            var count = XDocument.Parse(xml).Root?.Attribute("size")?.Value;
+            AddMetric(metrics, "Streams", count);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Xml.XmlException)
+        {
+        }
+    }
+
+    private static async Task AddQbittorrentTransferAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        ICollection<ServiceMetric> metrics,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var document = await client.GetFromJsonAsync<JsonDocument>(BuildUri(service.Url!, "/api/v2/transfer/info"), cancellationToken);
+            var root = document!.RootElement;
+            AddMetric(metrics, "Down", FormatBytesPerSecond(ReadLong(root, "dl_info_speed")));
+            AddMetric(metrics, "Up", FormatBytesPerSecond(ReadLong(root, "up_info_speed")));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+        }
+    }
+
+    private static async Task AddSabnzbdQueueAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        ICollection<ServiceMetric> metrics,
+        CancellationToken cancellationToken)
+    {
+        var query = "mode=queue&output=json";
+        if (!string.IsNullOrWhiteSpace(service.ApiKey))
+        {
+            query += $"&apikey={Uri.EscapeDataString(service.ApiKey)}";
+        }
+
+        try
+        {
+            var document = await client.GetFromJsonAsync<JsonDocument>(BuildUri(service.Url!, "/api", query), cancellationToken);
+            if (document!.RootElement.TryGetProperty("queue", out var queue))
+            {
+                AddMetric(metrics, "Queue", ReadString(queue, "noofslots"));
+                AddMetric(metrics, "Speed", ReadString(queue, "kbpersec") is { } speed ? $"{speed} KB/s" : null);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+        }
+    }
+
+    private static async Task AddJellyfinSessionsAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        ICollection<ServiceMetric> metrics,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(service.ApiKey))
+        {
+            return;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, "/Sessions"));
+            request.Headers.Add("X-Emby-Token", service.ApiKey);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            var document = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken);
+            AddMetric(metrics, "Sessions", document!.RootElement.GetArrayLength().ToString());
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+        }
+    }
+
+    private static async Task<int?> CountJsonArrayAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, path));
+            request.Headers.Add("X-Api-Key", service.ApiKey);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var document = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken);
+            return document!.RootElement.ValueKind == JsonValueKind.Array ? document.RootElement.GetArrayLength() : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<int?> ReadJsonIntAsync(
+        HttpClient client,
+        ServiceDefinition service,
+        string path,
+        string propertyName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, path));
+            request.Headers.Add("X-Api-Key", service.ApiKey);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var document = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken);
+            return ReadInt(document!.RootElement, propertyName);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            return null;
+        }
     }
 
     private static ServiceCard ToCard(
@@ -336,6 +679,16 @@ public sealed class ConfiguredServiceStatusProvider(
             ? property.GetString()
             : null;
 
+    private static int? ReadInt(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) && property.TryGetInt32(out var value)
+            ? value
+            : null;
+
+    private static long? ReadLong(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var property) && property.TryGetInt64(out var value)
+            ? value
+            : null;
+
     private static void AddMetric(ICollection<ServiceMetric> metrics, string label, string? value)
     {
         if (!string.IsNullOrWhiteSpace(value))
@@ -347,12 +700,34 @@ public sealed class ConfiguredServiceStatusProvider(
     private static string? Shorten(string? value, int length)
         => string.IsNullOrWhiteSpace(value) || value.Length <= length ? value : value[..length];
 
+    private static string? FormatBytesPerSecond(long? bytesPerSecond)
+    {
+        if (bytesPerSecond is null)
+        {
+            return null;
+        }
+
+        var units = new[] { "B/s", "KB/s", "MB/s", "GB/s" };
+        var value = (double)bytesPerSecond.Value;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return $"{value:0.#} {units[unitIndex]}";
+    }
+
     private static ServiceStatus ToStatus(HttpStatusCode statusCode)
         => (int)statusCode >= 500 ? ServiceStatus.Degraded : ServiceStatus.Offline;
 }
 
 public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 {
+    private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
+    private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+
     public SystemStats GetStats()
     {
         var disks = DriveInfo
@@ -368,10 +743,56 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 
         return new SystemStats(
             Environment.MachineName,
-            0,
-            Math.Round(memoryPercent, 1),
+            GetProcessCpuPercent(),
+            Math.Round(GetMemoryUsedPercent(memoryPercent), 1),
             disks,
             DateTimeOffset.UtcNow);
+    }
+
+    private double GetProcessCpuPercent()
+    {
+        var process = Process.GetCurrentProcess();
+        var now = DateTimeOffset.UtcNow;
+        var processorTime = process.TotalProcessorTime;
+        var elapsed = (now - lastSampledAt).TotalMilliseconds;
+        var used = (processorTime - lastProcessorTime).TotalMilliseconds;
+        lastSampledAt = now;
+        lastProcessorTime = processorTime;
+
+        if (elapsed <= 0)
+        {
+            return 0;
+        }
+
+        return Math.Round(Math.Clamp(used / (elapsed * Environment.ProcessorCount) * 100, 0, 100), 1);
+    }
+
+    private static double GetMemoryUsedPercent(double fallback)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return fallback;
+        }
+
+        var status = new MemoryStatusEx();
+        return GlobalMemoryStatusEx(status) ? status.MemoryLoad : fallback;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx status);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private sealed class MemoryStatusEx
+    {
+        public uint Length = (uint)Marshal.SizeOf<MemoryStatusEx>();
+        public uint MemoryLoad;
+        public ulong TotalPhys;
+        public ulong AvailPhys;
+        public ulong TotalPageFile;
+        public ulong AvailPageFile;
+        public ulong TotalVirtual;
+        public ulong AvailVirtual;
+        public ulong AvailExtendedVirtual;
     }
 }
 
@@ -435,11 +856,13 @@ public sealed class RssNewsProvider(
         => DateTimeOffset.TryParse(value, out var date) ? date : null;
 }
 
-public sealed class RestartCoordinator(IOptions<DashboardOptions> options) : IRestartCoordinator
+public sealed class RestartCoordinator(
+    IOptions<DashboardOptions> options,
+    IAgentCommandStore commandStore) : IRestartCoordinator
 {
     public RestartResult QueueRestart(string serviceId, RestartRequest request)
     {
-        var service = options.Value.Services.FirstOrDefault(candidate => candidate.Id == serviceId);
+        var service = options.Value.Services.FirstOrDefault(candidate => candidate.Id.Equals(serviceId, StringComparison.OrdinalIgnoreCase));
         if (service is null)
         {
             return new RestartResult(serviceId, RestartState.Rejected, "Service is not configured.", DateTimeOffset.UtcNow);
@@ -450,6 +873,12 @@ public sealed class RestartCoordinator(IOptions<DashboardOptions> options) : IRe
             return new RestartResult(serviceId, RestartState.Unsupported, "Restart controls are disabled for this service.", DateTimeOffset.UtcNow);
         }
 
-        return new RestartResult(serviceId, RestartState.Queued, $"Restart requested by {request.RequestedBy}.", DateTimeOffset.UtcNow);
+        var command = commandStore.Enqueue(options.Value.DefaultAgentId, serviceId, request);
+        return new RestartResult(
+            serviceId,
+            RestartState.Queued,
+            $"Restart queued for agent {command.AgentId}.",
+            command.RequestedAt,
+            command.Id);
     }
 }

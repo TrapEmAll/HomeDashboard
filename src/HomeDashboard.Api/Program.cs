@@ -1,9 +1,15 @@
 using System.Text.Json.Serialization;
 using HomeDashboard.Api;
 using HomeDashboard.Contracts;
+using Microsoft.Extensions.Options;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
+builder.Host.UseWindowsService();
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
@@ -28,8 +34,11 @@ builder.Services.AddSingleton<IServiceStatusProvider, ConfiguredServiceStatusPro
 builder.Services.AddSingleton<ISystemStatsProvider, LocalSystemStatsProvider>();
 builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
 builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
-builder.Services.AddSingleton<IAgentSnapshotStore, InMemoryAgentSnapshotStore>();
+builder.Services.AddSingleton<FileDashboardStateStore>();
+builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
+builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IApiKeyValidator, ApiKeyValidator>();
+builder.Services.AddSingleton<IBrowserSessionStore, InMemoryBrowserSessionStore>();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -38,15 +47,48 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy => policy.AllowAnyHeader().AllowAnyMethod().AllowAnyOrigin());
+    options.AddDefaultPolicy(policy => policy
+        .WithOrigins("http://localhost:5173", "https://localhost:5173", "http://127.0.0.1:5173", "https://127.0.0.1:5173")
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
 var app = builder.Build();
 
 app.UseCors();
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseMiddleware<ApiKeyMiddleware>();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", checkedAt = DateTimeOffset.UtcNow }));
+app.MapPost("/auth/login", (LoginRequest request, IApiKeyValidator validator, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
+{
+    if (!validator.IsDashboardPasswordValid(request.Password))
+    {
+        return Results.Unauthorized();
+    }
+
+    var session = sessions.Create(out var token);
+    context.Response.Cookies.Append(options.Value.SessionCookieName, token, new CookieOptions
+    {
+        HttpOnly = true,
+        IsEssential = true,
+        SameSite = SameSiteMode.Lax,
+        Secure = context.Request.IsHttps,
+        Expires = session.ExpiresAt
+    });
+
+    return Results.Ok(session);
+});
+app.MapPost("/auth/logout", (IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
+{
+    sessions.Remove(context.Request.Cookies[options.Value.SessionCookieName]);
+    context.Response.Cookies.Delete(options.Value.SessionCookieName);
+    return Results.NoContent();
+});
+app.MapGet("/auth/session", (IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context)
+    => Results.Ok(sessions.Get(context.Request.Cookies[options.Value.SessionCookieName])));
 app.MapGet("/api/dashboard", async (IDashboardService dashboard, CancellationToken cancellationToken)
     => Results.Ok(await dashboard.GetSnapshotAsync(cancellationToken)));
 app.MapGet("/api/services", async (IServiceStatusProvider services, CancellationToken cancellationToken)
@@ -64,11 +106,25 @@ app.MapPost("/api/agent/snapshot", (AgentSnapshot snapshot, IAgentSnapshotStore 
     store.Save(snapshot);
     return Results.Accepted($"/api/agent/{snapshot.AgentId}/latest", new { acceptedAt = DateTimeOffset.UtcNow });
 });
+app.MapGet("/api/agents", (IAgentSnapshotStore store) => Results.Ok(store.GetAll()));
 app.MapGet("/api/agent/{agentId}/latest", (string agentId, IAgentSnapshotStore store) =>
 {
     var snapshot = store.GetLatest(agentId);
     return snapshot is null ? Results.NotFound() : Results.Ok(snapshot);
 });
+app.MapGet("/api/agent/{agentId}/history", (string agentId, IAgentSnapshotStore store)
+    => Results.Ok(store.GetHistory(agentId)));
+app.MapGet("/api/agent/{agentId}/commands/next", (string agentId, IAgentCommandStore commands) =>
+{
+    var command = commands.DequeueNext(agentId);
+    return command is null ? Results.NoContent() : Results.Ok(command);
+});
+app.MapPost("/api/agent/{agentId}/commands/{commandId}/complete", (string agentId, string commandId, AgentCommandCompletion completion, IAgentCommandStore commands) =>
+{
+    commands.Complete(agentId, commandId, completion);
+    return Results.NoContent();
+});
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

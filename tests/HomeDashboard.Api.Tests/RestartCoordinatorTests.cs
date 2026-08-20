@@ -10,7 +10,7 @@ public sealed class RestartCoordinatorTests
     [Fact]
     public void QueueRestart_rejects_unknown_service()
     {
-        var coordinator = new RestartCoordinator(Options.Create(new DashboardOptions()));
+        var coordinator = new RestartCoordinator(Options.Create(new DashboardOptions()), CreateStore());
 
         var result = coordinator.QueueRestart("missing", new RestartRequest("test", null));
 
@@ -20,8 +20,10 @@ public sealed class RestartCoordinatorTests
     [Fact]
     public void QueueRestart_returns_queued_when_enabled()
     {
+        var store = CreateStore();
         var coordinator = new RestartCoordinator(Options.Create(new DashboardOptions
         {
+            DefaultAgentId = "server-pc",
             Services =
             [
                 new ServiceDefinition
@@ -31,10 +33,18 @@ public sealed class RestartCoordinatorTests
                     RestartEnabled = true
                 }
             ]
-        }));
+        }), store);
 
         var result = coordinator.QueueRestart("plex", new RestartRequest("test", null));
 
         Assert.Equal(RestartState.Queued, result.State);
+        Assert.NotNull(result.CommandId);
+        Assert.Equal(result.CommandId, store.DequeueNext("server-pc")?.Id);
+    }
+
+    private static FileDashboardStateStore CreateStore()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "homedashboard-tests", $"{Guid.NewGuid():n}.json");
+        return new FileDashboardStateStore(Options.Create(new DashboardOptions { DataPath = path }));
     }
 }

@@ -26,6 +26,68 @@ button {
   padding: 28px;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  width: min(100%, 380px);
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dde3e8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 24px;
+}
+
+.login-mark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cfe1d8;
+  border-radius: 8px;
+  color: #146c43;
+  background: #e8f7ef;
+}
+
+.login-panel h1 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.login-panel p {
+  margin: 0;
+  color: #5c6975;
+}
+
+.login-panel input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #cfd7df;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #17202a;
+  background: #ffffff;
+}
+
+.login-panel button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  background: #1f6f52;
+  cursor: pointer;
+}
+
+.login-panel button:disabled {
+  cursor: not-allowed;
+  background: #8cac9f;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -54,6 +116,12 @@ button {
   background: #ffffff;
   color: #17202a;
   cursor: pointer;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
 .refresh-button {
@@ -279,6 +347,31 @@ button {
   line-height: 1.35;
 }
 
+.agent-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e1e7ec;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.agent-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.agent-row span:not(.status) {
+  color: #667481;
+  font-size: 13px;
+}
+
 .empty-state,
 .loading-panel,
 .error-banner {
@@ -299,6 +392,11 @@ button {
   border-color: #f0b8b5;
   color: #8d1f1b;
   margin-bottom: 18px;
+}
+
+.error-banner.compact {
+  margin: 0;
+  font-size: 14px;
 }
 
 @media (max-width: 900px) {

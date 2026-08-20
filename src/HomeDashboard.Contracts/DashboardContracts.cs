@@ -4,13 +4,30 @@ public sealed record DashboardSnapshot(
     DateTimeOffset GeneratedAt,
     IReadOnlyList<ServiceCard> Services,
     SystemStats System,
-    IReadOnlyList<NewsItem> News);
+    IReadOnlyList<NewsItem> News,
+    IReadOnlyList<AgentSummary> Agents);
 
 public sealed record AgentSnapshot(
     string AgentId,
     DateTimeOffset CapturedAt,
     SystemStats System,
     IReadOnlyList<ServiceCard> Services);
+
+public sealed record AgentSummary(
+    string AgentId,
+    string Hostname,
+    DateTimeOffset LastSeenAt,
+    ServiceStatus Status,
+    int ServicesMonitored);
+
+public sealed record AgentHistoryPoint(
+    string AgentId,
+    DateTimeOffset CapturedAt,
+    double CpuPercent,
+    double MemoryUsedPercent,
+    int ServicesOnline,
+    int ServicesDegraded,
+    int ServicesOffline);
 
 public sealed record ServiceCard(
     string Id,
@@ -80,7 +97,8 @@ public sealed record RestartResult(
     string ServiceId,
     RestartState State,
     string Message,
-    DateTimeOffset RequestedAt);
+    DateTimeOffset RequestedAt,
+    string? CommandId = null);
 
 public enum RestartState
 {
@@ -88,3 +106,39 @@ public enum RestartState
     Rejected,
     Unsupported
 }
+
+public sealed record LoginRequest(
+    string Password);
+
+public sealed record AuthSession(
+    bool IsAuthenticated,
+    DateTimeOffset? ExpiresAt);
+
+public sealed record AgentCommand(
+    string Id,
+    string AgentId,
+    AgentCommandKind Kind,
+    string ServiceId,
+    string RequestedBy,
+    string? Reason,
+    DateTimeOffset RequestedAt,
+    AgentCommandState State,
+    string? Message = null,
+    DateTimeOffset? CompletedAt = null);
+
+public enum AgentCommandKind
+{
+    RestartService
+}
+
+public enum AgentCommandState
+{
+    Queued,
+    Running,
+    Succeeded,
+    Failed
+}
+
+public sealed record AgentCommandCompletion(
+    bool Succeeded,
+    string Message);

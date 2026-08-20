@@ -3,8 +3,13 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
+builder.Services.AddWindowsService(options => options.ServiceName = "HomeDashboard Agent");
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
@@ -23,6 +28,7 @@ builder.Services.AddSingleton<ISystemSnapshotCollector, SystemSnapshotCollector>
 builder.Services.AddSingleton<IWindowsServiceSnapshotCollector, WindowsServiceSnapshotCollector>();
 builder.Services.AddSingleton<IAgentCollector, AgentCollector>();
 builder.Services.AddSingleton<IAgentPublisher, AgentPublisher>();
+builder.Services.AddSingleton<IAgentCommandExecutor, AgentCommandExecutor>();
 builder.Services.AddHostedService<Worker>();
 
 await builder.Build().RunAsync();

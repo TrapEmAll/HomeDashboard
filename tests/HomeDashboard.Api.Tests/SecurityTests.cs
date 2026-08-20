@@ -12,11 +12,13 @@ public sealed class SecurityTests
         var validator = new ApiKeyValidator(Options.Create(new DashboardSecurityOptions
         {
             DashboardApiKey = "dashboard-secret",
-            AgentApiKey = "agent-secret"
+            AgentApiKey = "agent-secret",
+            DashboardPassword = "dashboard-password"
         }));
 
         Assert.True(validator.IsDashboardKeyValid("dashboard-secret"));
         Assert.False(validator.IsDashboardKeyValid("agent-secret"));
+        Assert.True(validator.IsDashboardPasswordValid("dashboard-password"));
     }
 
     [Fact]
