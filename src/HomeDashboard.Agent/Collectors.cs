@@ -30,6 +30,7 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 {
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+    private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
 
     public SystemStats Collect()
     {
@@ -41,10 +42,28 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 
         return new SystemStats(
             Environment.MachineName,
-            GetProcessCpuPercent(),
+            (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
             GetMemoryUsedPercent(GetProcessMemoryPercent()),
             disks,
             DateTimeOffset.UtcNow);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private double? GetHostCpuPercent()
+    {
+        if (cpuCounter is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Math.Round(Math.Clamp(cpuCounter.NextValue(), 0, 100), 1);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private double GetProcessCpuPercent()
@@ -85,6 +104,25 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 
         var status = new MemoryStatusEx();
         return GlobalMemoryStatusEx(status) ? status.MemoryLoad : fallback;
+    }
+
+    private static PerformanceCounter? CreateCpuCounter()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        try
+        {
+            var counter = new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
+            counter.NextValue();
+            return counter;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

@@ -5,7 +5,9 @@ public sealed record DashboardSnapshot(
     IReadOnlyList<ServiceCard> Services,
     SystemStats System,
     IReadOnlyList<NewsItem> News,
-    IReadOnlyList<AgentSummary> Agents);
+    IReadOnlyList<AgentSummary> Agents,
+    IReadOnlyList<DashboardNotification> Notifications,
+    IReadOnlyList<AuditEvent> RecentAuditEvents);
 
 public sealed record AgentSnapshot(
     string AgentId,
@@ -91,7 +93,8 @@ public sealed record NewsItem(
 
 public sealed record RestartRequest(
     string RequestedBy,
-    string? Reason);
+    string? Reason,
+    bool Confirmed = false);
 
 public sealed record RestartResult(
     string ServiceId,
@@ -142,3 +145,67 @@ public enum AgentCommandState
 public sealed record AgentCommandCompletion(
     bool Succeeded,
     string Message);
+
+public sealed record DashboardNotification(
+    string Id,
+    NotificationSeverity Severity,
+    string Title,
+    string Message,
+    DateTimeOffset CreatedAt);
+
+public enum NotificationSeverity
+{
+    Info,
+    Warning,
+    Critical
+}
+
+public sealed record AuditEvent(
+    string Id,
+    AuditEventType Type,
+    string Message,
+    string? ServiceId,
+    string? AgentId,
+    string Actor,
+    DateTimeOffset OccurredAt,
+    string? CommandId = null,
+    bool Succeeded = true);
+
+public enum AuditEventType
+{
+    SetupSaved,
+    RestartQueued,
+    RestartCompleted,
+    RestartRejected,
+    AgentSnapshotReceived
+}
+
+public sealed record SetupStatus(
+    bool IsConfigured,
+    bool UsesPlaceholderSecrets,
+    bool RequiresRestart,
+    string? DefaultAgentId,
+    int ServiceCount,
+    int NewsFeedCount);
+
+public sealed record SetupRequest(
+    string DashboardPassword,
+    string? DashboardApiKey,
+    string? AgentApiKey,
+    string DefaultAgentId,
+    IReadOnlyList<ServiceSetupRequest> Services,
+    IReadOnlyList<NewsFeedSetupRequest> NewsFeeds);
+
+public sealed record ServiceSetupRequest(
+    string Id,
+    string Name,
+    ServiceKind Kind,
+    string Description,
+    string? Url,
+    string? HealthUrl,
+    string? ApiKey,
+    bool RestartEnabled);
+
+public sealed record NewsFeedSetupRequest(
+    string Name,
+    string Url);

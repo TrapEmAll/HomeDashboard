@@ -1,6 +1,6 @@
 # HomeDashboard
 
-HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, browser login, and guarded restart commands.
+HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, first-run setup, browser login, alerts, audit history, live updates, and guarded restart commands.
 
 ## Repository layout
 
@@ -31,10 +31,15 @@ The API exposes:
 - `POST /auth/login`
 - `POST /auth/logout`
 - `GET /auth/session`
+- `GET /setup/status`
+- `POST /setup`
 - `GET /api/dashboard`
+- `GET /api/events`
 - `GET /api/services`
 - `GET /api/system`
 - `GET /api/news`
+- `GET /api/audit`
+- `GET /api/commands`
 - `POST /api/agent/snapshot`
 - `GET /api/agents`
 - `GET /api/agent/{agentId}/latest`
@@ -78,12 +83,13 @@ The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
 - `api/HomeDashboard.Api.exe`, which serves the API and bundled web dashboard.
 - `agent/HomeDashboard.Agent.exe`, which reports Windows service/system state and runs queued restart commands.
 - `tools/install-api-service.ps1` and `tools/install-agent-service.ps1` for optional Windows service installation.
+- `tools/install-homedashboard.ps1`, a combined installer wrapper for the packaged API and agent services.
 
 ## Configuration
 
 Edit `src/HomeDashboard.Api/appsettings.json` to define browser auth, service cards, RSS sources, API keys, persisted state location, and service integrations. Supported service kinds include Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks.
 
-Restart controls queue commands for `Dashboard:DefaultAgentId`. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
+Restart controls require browser confirmation, queue commands for `Dashboard:DefaultAgentId`, and write audit events for queued, rejected, and completed commands. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
 
 ## MVP boundaries
 
@@ -91,4 +97,5 @@ Restart controls queue commands for `Dashboard:DefaultAgentId`. The agent only e
 - Agent snapshots are accepted with API-key authentication, persisted to disk, and summarized with rolling history for the configured `DefaultAgentId`.
 - First-class service checks report status and metric chips for Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin when their URLs/API keys are configured.
 - RSS support fetches configured feeds and parses common RSS/Atom fields.
-- The agent reads configured Windows service states, collects disk/memory/sampled CPU stats, posts snapshots to the API, polls restart commands, and reports command completion.
+- The agent reads configured Windows service states, collects disk/memory/Windows host CPU stats, posts snapshots to the API, polls restart commands, and reports command completion.
+- Alerts surface offline/degraded services, stale agents, and nearly-full disks; the browser receives live dashboard snapshots over server-sent events.

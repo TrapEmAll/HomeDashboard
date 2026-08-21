@@ -33,7 +33,8 @@ button {
   padding: 24px;
 }
 
-.login-panel {
+.login-panel,
+.setup-panel {
   width: min(100%, 380px);
   display: grid;
   gap: 14px;
@@ -41,6 +42,10 @@ button {
   border-radius: 8px;
   background: #ffffff;
   padding: 24px;
+}
+
+.setup-panel {
+  width: min(100%, 760px);
 }
 
 .login-mark {
@@ -54,17 +59,21 @@ button {
   background: #e8f7ef;
 }
 
-.login-panel h1 {
+.login-panel h1,
+.setup-panel h1 {
   margin: 0;
   font-size: 26px;
 }
 
-.login-panel p {
+.login-panel p,
+.setup-panel p {
   margin: 0;
   color: #5c6975;
 }
 
-.login-panel input {
+.login-panel input,
+.setup-panel input,
+.setup-panel select {
   width: 100%;
   min-height: 42px;
   border: 1px solid #cfd7df;
@@ -74,7 +83,8 @@ button {
   background: #ffffff;
 }
 
-.login-panel button {
+.login-panel button,
+.setup-panel button {
   min-height: 42px;
   border: 0;
   border-radius: 8px;
@@ -83,9 +93,34 @@ button {
   cursor: pointer;
 }
 
-.login-panel button:disabled {
+.login-panel button:disabled,
+.setup-panel button:disabled {
   cursor: not-allowed;
   background: #8cac9f;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 6px;
+  color: #52616f;
+  font-size: 13px;
+}
+
+.setup-list {
+  display: grid;
+  gap: 8px;
+}
+
+.setup-service {
+  display: grid;
+  grid-template-columns: 1fr 150px 1.4fr;
+  gap: 8px;
 }
 
 .topbar {
@@ -303,7 +338,9 @@ button {
 }
 
 .disk-list,
-.news-list {
+.news-list,
+.notice-list,
+.audit-list {
   display: grid;
   gap: 10px;
   margin-top: 16px;
@@ -372,6 +409,39 @@ button {
   font-size: 13px;
 }
 
+.notice,
+.audit-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  border: 1px solid #e1e7ec;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.notice.warning {
+  border-color: #f5d98b;
+  background: #fff9e8;
+}
+
+.notice.critical {
+  border-color: #f0b8b5;
+  background: #fff1f0;
+}
+
+.notice div,
+.audit-row div {
+  display: grid;
+  gap: 3px;
+}
+
+.notice span,
+.audit-row span,
+.audit-row time {
+  color: #667481;
+  font-size: 13px;
+}
+
 .empty-state,
 .loading-panel,
 .error-banner {
@@ -388,10 +458,23 @@ button {
   padding: 16px;
 }
 
-.error-banner {
+.error-banner,
+.success-banner {
   border-color: #f0b8b5;
   color: #8d1f1b;
   margin-bottom: 18px;
+}
+
+.success-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #b9e2c9;
+  border-radius: 8px;
+  color: #146c43;
+  background: #edf9f1;
+  padding: 12px;
+  margin: 0;
 }
 
 .error-banner.compact {
@@ -413,11 +496,46 @@ button {
     display: grid;
   }
 
+  .topbar-actions {
+    justify-content: stretch;
+  }
+
+  .refresh-button {
+    flex: 1;
+  }
+
   .dashboard-layout {
     display: grid;
   }
 
   .side-column {
     grid-row: auto;
+  }
+
+  .form-grid,
+  .setup-service {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell,
+  .auth-shell {
+    padding: 12px;
+  }
+
+  .panel,
+  .login-panel,
+  .setup-panel,
+  .service-card {
+    padding: 14px;
+  }
+
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .service-grid {
+    grid-template-columns: 1fr;
   }
 }

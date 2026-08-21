@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Xml.Linq;
 using HomeDashboard.Contracts;
@@ -47,6 +48,15 @@ public interface IAgentCommandStore
     AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request);
     AgentCommand? DequeueNext(string agentId);
     void Complete(string agentId, string commandId, AgentCommandCompletion completion);
+    IReadOnlyList<AgentCommand> GetRecentCommands(int count);
+    IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count);
+    void AddAuditEvent(AuditEvent auditEvent);
+}
+
+public interface ISetupService
+{
+    SetupStatus GetStatus();
+    Task<SetupStatus> SaveAsync(SetupRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class DashboardService(
@@ -54,6 +64,7 @@ public sealed class DashboardService(
     ISystemStatsProvider systemStatsProvider,
     INewsProvider newsProvider,
     IAgentSnapshotStore agentSnapshotStore,
+    IAgentCommandStore commandStore,
     IOptions<DashboardOptions> options) : IDashboardService
 {
     public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
@@ -67,7 +78,9 @@ public sealed class DashboardService(
             MergeServices(await servicesTask, latestAgent?.Services),
             latestAgent?.System ?? systemStatsProvider.GetStats(),
             await newsTask,
-            agentSnapshotStore.GetAll());
+            agentSnapshotStore.GetAll(),
+            BuildNotifications(latestAgent?.System ?? systemStatsProvider.GetStats(), await servicesTask, agentSnapshotStore.GetAll()),
+            commandStore.GetRecentAuditEvents(8));
     }
 
     private static IReadOnlyList<ServiceCard> MergeServices(
@@ -86,6 +99,51 @@ public sealed class DashboardService(
         }
 
         return merged.Values.OrderBy(service => service.Name).ToArray();
+    }
+
+    private static IReadOnlyList<DashboardNotification> BuildNotifications(
+        SystemStats system,
+        IReadOnlyList<ServiceCard> services,
+        IReadOnlyList<AgentSummary> agents)
+    {
+        var notifications = new List<DashboardNotification>();
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var service in services.Where(service => service.Status is ServiceStatus.Offline or ServiceStatus.Degraded))
+        {
+            notifications.Add(new DashboardNotification(
+                $"service-{service.Id}",
+                service.Status == ServiceStatus.Offline ? NotificationSeverity.Critical : NotificationSeverity.Warning,
+                $"{service.Name} is {service.Status}",
+                service.StatusMessage ?? "Service needs attention.",
+                now));
+        }
+
+        foreach (var disk in system.Disks)
+        {
+            var usedPercent = disk.TotalBytes > 0 ? (double)(disk.TotalBytes - disk.FreeBytes) / disk.TotalBytes * 100 : 0;
+            if (usedPercent >= 90)
+            {
+                notifications.Add(new DashboardNotification(
+                    $"disk-{disk.Name}",
+                    NotificationSeverity.Critical,
+                    $"Disk {disk.Name} is almost full",
+                    $"{usedPercent:0}% used.",
+                    now));
+            }
+        }
+
+        foreach (var agent in agents.Where(agent => agent.Status != ServiceStatus.Online))
+        {
+            notifications.Add(new DashboardNotification(
+                $"agent-{agent.AgentId}",
+                NotificationSeverity.Warning,
+                $"Agent {agent.AgentId} is stale",
+                $"Last seen {agent.LastSeenAt.LocalDateTime}.",
+                now));
+        }
+
+        return notifications.Take(12).ToArray();
     }
 }
 
@@ -164,6 +222,14 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
                 history.RemoveRange(0, history.Count - historyLimit);
             }
 
+            AddAuditEventLocked(new AuditEvent(
+                Guid.NewGuid().ToString("n"),
+                AuditEventType.AgentSnapshotReceived,
+                $"Agent {snapshot.AgentId} reported {snapshot.Services.Count} service(s).",
+                null,
+                snapshot.AgentId,
+                "agent",
+                DateTimeOffset.UtcNow));
             SaveLocked();
         }
     }
@@ -183,6 +249,15 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         lock (gate)
         {
             state.Commands.Add(command);
+            AddAuditEventLocked(new AuditEvent(
+                Guid.NewGuid().ToString("n"),
+                AuditEventType.RestartQueued,
+                $"Restart queued for {serviceId} on agent {agentId}.",
+                serviceId,
+                agentId,
+                request.RequestedBy,
+                command.RequestedAt,
+                command.Id));
             SaveLocked();
         }
 
@@ -229,6 +304,47 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
                 Message = completion.Message,
                 CompletedAt = DateTimeOffset.UtcNow
             });
+            AddAuditEventLocked(new AuditEvent(
+                Guid.NewGuid().ToString("n"),
+                AuditEventType.RestartCompleted,
+                completion.Message,
+                command.ServiceId,
+                agentId,
+                "agent",
+                DateTimeOffset.UtcNow,
+                command.Id,
+                completion.Succeeded));
+            SaveLocked();
+        }
+    }
+
+    public IReadOnlyList<AgentCommand> GetRecentCommands(int count)
+    {
+        lock (gate)
+        {
+            return state.Commands
+                .OrderByDescending(command => command.RequestedAt)
+                .Take(count)
+                .ToArray();
+        }
+    }
+
+    public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count)
+    {
+        lock (gate)
+        {
+            return state.AuditEvents
+                .OrderByDescending(auditEvent => auditEvent.OccurredAt)
+                .Take(count)
+                .ToArray();
+        }
+    }
+
+    public void AddAuditEvent(AuditEvent auditEvent)
+    {
+        lock (gate)
+        {
+            AddAuditEventLocked(auditEvent);
             SaveLocked();
         }
     }
@@ -267,11 +383,21 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         }
     }
 
+    private void AddAuditEventLocked(AuditEvent auditEvent)
+    {
+        state.AuditEvents.Add(auditEvent);
+        if (state.AuditEvents.Count > 300)
+        {
+            state.AuditEvents.RemoveRange(0, state.AuditEvents.Count - 300);
+        }
+    }
+
     private sealed class DashboardState
     {
         public Dictionary<string, AgentSnapshot> Snapshots { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, List<AgentHistoryPoint>> History { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         public List<AgentCommand> Commands { get; init; } = [];
+        public List<AuditEvent> AuditEvents { get; init; } = [];
     }
 }
 
@@ -727,6 +853,7 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 {
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
+    private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
 
     public SystemStats GetStats()
     {
@@ -743,10 +870,28 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 
         return new SystemStats(
             Environment.MachineName,
-            GetProcessCpuPercent(),
+            (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
             Math.Round(GetMemoryUsedPercent(memoryPercent), 1),
             disks,
             DateTimeOffset.UtcNow);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private double? GetHostCpuPercent()
+    {
+        if (cpuCounter is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Math.Round(Math.Clamp(cpuCounter.NextValue(), 0, 100), 1);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private double GetProcessCpuPercent()
@@ -776,6 +921,25 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 
         var status = new MemoryStatusEx();
         return GlobalMemoryStatusEx(status) ? status.MemoryLoad : fallback;
+    }
+
+    private static PerformanceCounter? CreateCpuCounter()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        try
+        {
+            var counter = new PerformanceCounter("Processor", "% Processor Time", "_Total", readOnly: true);
+            counter.NextValue();
+            return counter;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -865,12 +1029,20 @@ public sealed class RestartCoordinator(
         var service = options.Value.Services.FirstOrDefault(candidate => candidate.Id.Equals(serviceId, StringComparison.OrdinalIgnoreCase));
         if (service is null)
         {
+            AddRestartRejection(serviceId, request.RequestedBy, "Service is not configured.");
             return new RestartResult(serviceId, RestartState.Rejected, "Service is not configured.", DateTimeOffset.UtcNow);
         }
 
         if (!service.RestartEnabled)
         {
+            AddRestartRejection(serviceId, request.RequestedBy, "Restart controls are disabled for this service.");
             return new RestartResult(serviceId, RestartState.Unsupported, "Restart controls are disabled for this service.", DateTimeOffset.UtcNow);
+        }
+
+        if (!request.Confirmed)
+        {
+            AddRestartRejection(serviceId, request.RequestedBy, "Restart was not confirmed.");
+            return new RestartResult(serviceId, RestartState.Rejected, "Restart requires confirmation.", DateTimeOffset.UtcNow);
         }
 
         var command = commandStore.Enqueue(options.Value.DefaultAgentId, serviceId, request);
@@ -881,4 +1053,16 @@ public sealed class RestartCoordinator(
             command.RequestedAt,
             command.Id);
     }
+
+    private void AddRestartRejection(string serviceId, string actor, string message)
+        => commandStore.AddAuditEvent(new AuditEvent(
+            Guid.NewGuid().ToString("n"),
+            AuditEventType.RestartRejected,
+            message,
+            serviceId,
+            options.Value.DefaultAgentId,
+            actor,
+            DateTimeOffset.UtcNow,
+            null,
+            false));
 }

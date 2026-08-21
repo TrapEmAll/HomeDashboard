@@ -35,11 +35,32 @@ public sealed class RestartCoordinatorTests
             ]
         }), store);
 
-        var result = coordinator.QueueRestart("plex", new RestartRequest("test", null));
+        var result = coordinator.QueueRestart("plex", new RestartRequest("test", null, true));
 
         Assert.Equal(RestartState.Queued, result.State);
         Assert.NotNull(result.CommandId);
         Assert.Equal(result.CommandId, store.DequeueNext("server-pc")?.Id);
+    }
+
+    [Fact]
+    public void QueueRestart_rejects_unconfirmed_restart()
+    {
+        var coordinator = new RestartCoordinator(Options.Create(new DashboardOptions
+        {
+            Services =
+            [
+                new ServiceDefinition
+                {
+                    Id = "plex",
+                    Name = "Plex",
+                    RestartEnabled = true
+                }
+            ]
+        }), CreateStore());
+
+        var result = coordinator.QueueRestart("plex", new RestartRequest("test", null));
+
+        Assert.Equal(RestartState.Rejected, result.State);
     }
 
     private static FileDashboardStateStore CreateStore()

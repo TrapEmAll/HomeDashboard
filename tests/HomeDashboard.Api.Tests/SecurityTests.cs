@@ -34,4 +34,16 @@ public sealed class SecurityTests
         Assert.False(validator.IsAgentKeyValid("dashboard-secret"));
         Assert.True(validator.IsAgentKeyValid("agent-secret"));
     }
+
+    [Fact]
+    public void Dashboard_password_validator_accepts_hash()
+    {
+        var validator = new ApiKeyValidator(Options.Create(new DashboardSecurityOptions
+        {
+            DashboardPasswordHash = ApiKeyValidator.HashSecret("dashboard-password")
+        }));
+
+        Assert.True(validator.IsDashboardPasswordValid("dashboard-password"));
+        Assert.False(validator.IsDashboardPasswordValid("wrong-password"));
+    }
 }

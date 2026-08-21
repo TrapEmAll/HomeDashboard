@@ -101,7 +101,7 @@ Example download clients:
 
 ## Authentication and secrets
 
-Browser users sign in through `/auth/login` with `Security:DashboardPassword`. The API sets an HttpOnly session cookie and the React app uses that cookie for dashboard requests.
+Browser users sign in through `/auth/login` with `Security:DashboardPassword` or `Security:DashboardPasswordHash`. The first-run setup UI writes `appsettings.Local.json` with a password hash and generated API keys when you leave key fields blank. Restart the API after saving setup so all new values are loaded.
 
 Dashboard automation can still call dashboard endpoints with `X-HomeDashboard-Key: Security:DashboardApiKey`. Agent write/poll endpoints use `Security:AgentApiKey`.
 
@@ -112,7 +112,8 @@ API settings:
   "Security": {
     "DashboardApiKey": "replace-with-a-dashboard-key",
     "AgentApiKey": "replace-with-a-different-agent-key",
-    "DashboardPassword": "replace-with-a-browser-password"
+    "DashboardPassword": "replace-with-a-browser-password",
+    "DashboardPasswordHash": ""
   }
 }
 ```
@@ -134,7 +135,7 @@ For deployed web builds served by the API executable, no frontend secret is need
 
 ## Persistence
 
-The API stores latest agent snapshots, rolling history, and queued command state in `Dashboard:DataPath`.
+The API stores latest agent snapshots, rolling history, queued command state, and restart audit history in `Dashboard:DataPath`.
 
 ```json
 {
@@ -184,7 +185,13 @@ VITE_API_BASE_URL=https://your-dashboard-api
 }
 ```
 
-The API uses `Dashboard:DefaultAgentId` to decide which agent snapshot should drive dashboard system stats and where restart commands should be queued. A restart command only runs when both the API service card and the agent service entry have `RestartEnabled: true`.
+The API uses `Dashboard:DefaultAgentId` to decide which agent snapshot should drive dashboard system stats and where restart commands should be queued. A restart command requires browser confirmation and only runs when both the API service card and the agent service entry have `RestartEnabled: true`.
+
+## Alerts, audit, and live updates
+
+The dashboard includes active alerts for offline/degraded services, stale agents, and disks above 90% usage. Restart queue/rejection/completion records appear in the audit panel and are also available from `GET /api/audit`.
+
+The browser subscribes to `GET /api/events` for server-sent dashboard updates and keeps polling as a fallback.
 
 ## Windows package
 
@@ -194,4 +201,4 @@ Create the executable package with:
 powershell -ExecutionPolicy Bypass -File tools/publish-windows.ps1
 ```
 
-Run `outputs/HomeDashboard-Windows/api/HomeDashboard.Api.exe` for the dashboard/API and `outputs/HomeDashboard-Windows/agent/HomeDashboard.Agent.exe` on the services PC. The optional installer scripts in `outputs/HomeDashboard-Windows/tools` create Windows services for those executables.
+Run `outputs/HomeDashboard-Windows/api/HomeDashboard.Api.exe` for the dashboard/API and `outputs/HomeDashboard-Windows/agent/HomeDashboard.Agent.exe` on the services PC. The optional installer scripts in `outputs/HomeDashboard-Windows/tools` create Windows services for those executables. `install-homedashboard.ps1` wraps both service installers.

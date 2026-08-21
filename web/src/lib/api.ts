@@ -1,4 +1,4 @@
-import type { DashboardSnapshot } from "../types/dashboard";
+import type { DashboardSnapshot, SetupRequest, SetupStatus } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -41,6 +41,22 @@ export async function logout(): Promise<void> {
   }
 }
 
+export async function getSetupStatus(): Promise<SetupStatus> {
+  const response = await fetch(`${apiBaseUrl}/setup/status`, { credentials: "include" });
+  return readJson<SetupStatus>(response);
+}
+
+export async function saveSetup(request: SetupRequest): Promise<SetupStatus> {
+  const response = await fetch(`${apiBaseUrl}/setup`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+
+  return readJson<SetupStatus>(response);
+}
+
 export async function getDashboard(): Promise<DashboardSnapshot> {
   const response = await fetch(`${apiBaseUrl}/api/dashboard`, { credentials: "include" });
   if (!response.ok) {
@@ -55,10 +71,14 @@ export async function requestRestart(serviceId: string): Promise<void> {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requestedBy: "dashboard", reason: "Manual dashboard action" })
+    body: JSON.stringify({ requestedBy: "dashboard", reason: "Manual dashboard action", confirmed: true })
   });
 
   if (!response.ok && response.status !== 202) {
     throw new Error(`Restart request failed with ${response.status}`);
   }
+}
+
+export function dashboardEventsUrl(): string {
+  return `${apiBaseUrl}/api/events`;
 }

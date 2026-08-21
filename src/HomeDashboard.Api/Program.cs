@@ -9,6 +9,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory
 });
 
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 builder.Host.UseWindowsService();
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -34,6 +35,7 @@ builder.Services.AddSingleton<IServiceStatusProvider, ConfiguredServiceStatusPro
 builder.Services.AddSingleton<ISystemStatsProvider, LocalSystemStatsProvider>();
 builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
 builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
+builder.Services.AddSingleton<ISetupService, SetupService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
@@ -62,6 +64,18 @@ app.UseStaticFiles();
 app.UseMiddleware<ApiKeyMiddleware>();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", checkedAt = DateTimeOffset.UtcNow }));
+app.MapGet("/setup/status", (ISetupService setup) => Results.Ok(setup.GetStatus()));
+app.MapPost("/setup", async (SetupRequest request, ISetupService setup, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await setup.SaveAsync(request, cancellationToken));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
 app.MapPost("/auth/login", (LoginRequest request, IApiKeyValidator validator, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
 {
     if (!validator.IsDashboardPasswordValid(request.Password))
@@ -96,6 +110,19 @@ app.MapGet("/api/services", async (IServiceStatusProvider services, Cancellation
 app.MapGet("/api/system", (ISystemStatsProvider stats) => Results.Ok(stats.GetStats()));
 app.MapGet("/api/news", async (INewsProvider news, CancellationToken cancellationToken)
     => Results.Ok(await news.GetNewsAsync(cancellationToken)));
+app.MapGet("/api/audit", (IAgentCommandStore commands) => Results.Ok(commands.GetRecentAuditEvents(50)));
+app.MapGet("/api/commands", (IAgentCommandStore commands) => Results.Ok(commands.GetRecentCommands(50)));
+app.MapGet("/api/events", async (IDashboardService dashboard, HttpContext context, CancellationToken cancellationToken) =>
+{
+    context.Response.Headers.ContentType = "text/event-stream";
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        var snapshot = await dashboard.GetSnapshotAsync(cancellationToken);
+        await context.Response.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(snapshot)}\n\n", cancellationToken);
+        await context.Response.Body.FlushAsync(cancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+    }
+});
 app.MapPost("/api/services/{id}/restart", (string id, RestartRequest request, IRestartCoordinator restarts) =>
 {
     var result = restarts.QueueRestart(id, request);
