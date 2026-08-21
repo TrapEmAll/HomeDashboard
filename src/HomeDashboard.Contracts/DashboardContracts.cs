@@ -1,0 +1,144 @@
+namespace HomeDashboard.Contracts;
+
+public sealed record DashboardSnapshot(
+    DateTimeOffset GeneratedAt,
+    IReadOnlyList<ServiceCard> Services,
+    SystemStats System,
+    IReadOnlyList<NewsItem> News,
+    IReadOnlyList<AgentSummary> Agents);
+
+public sealed record AgentSnapshot(
+    string AgentId,
+    DateTimeOffset CapturedAt,
+    SystemStats System,
+    IReadOnlyList<ServiceCard> Services);
+
+public sealed record AgentSummary(
+    string AgentId,
+    string Hostname,
+    DateTimeOffset LastSeenAt,
+    ServiceStatus Status,
+    int ServicesMonitored);
+
+public sealed record AgentHistoryPoint(
+    string AgentId,
+    DateTimeOffset CapturedAt,
+    double CpuPercent,
+    double MemoryUsedPercent,
+    int ServicesOnline,
+    int ServicesDegraded,
+    int ServicesOffline);
+
+public sealed record ServiceCard(
+    string Id,
+    string Name,
+    ServiceKind Kind,
+    string Description,
+    Uri? Url,
+    ServiceStatus Status,
+    bool RestartEnabled,
+    DateTimeOffset? LastCheckedAt,
+    string? StatusMessage,
+    IReadOnlyList<ServiceMetric> Metrics);
+
+public sealed record ServiceMetric(
+    string Label,
+    string Value);
+
+public enum ServiceKind
+{
+    Generic,
+    Plex,
+    Sonarr,
+    Radarr,
+    Lidarr,
+    Readarr,
+    Prowlarr,
+    Bazarr,
+    qBittorrent,
+    SABnzbd,
+    Jellyfin,
+    GameServer,
+    FileShare
+}
+
+public enum ServiceStatus
+{
+    Unknown,
+    Online,
+    Degraded,
+    Offline
+}
+
+public sealed record SystemStats(
+    string Hostname,
+    double CpuPercent,
+    double MemoryUsedPercent,
+    IReadOnlyList<DiskStats> Disks,
+    DateTimeOffset CapturedAt);
+
+public sealed record DiskStats(
+    string Name,
+    long TotalBytes,
+    long FreeBytes);
+
+public sealed record NewsItem(
+    string Source,
+    string Title,
+    Uri? Url,
+    DateTimeOffset? PublishedAt,
+    string? Summary);
+
+public sealed record RestartRequest(
+    string RequestedBy,
+    string? Reason);
+
+public sealed record RestartResult(
+    string ServiceId,
+    RestartState State,
+    string Message,
+    DateTimeOffset RequestedAt,
+    string? CommandId = null);
+
+public enum RestartState
+{
+    Queued,
+    Rejected,
+    Unsupported
+}
+
+public sealed record LoginRequest(
+    string Password);
+
+public sealed record AuthSession(
+    bool IsAuthenticated,
+    DateTimeOffset? ExpiresAt);
+
+public sealed record AgentCommand(
+    string Id,
+    string AgentId,
+    AgentCommandKind Kind,
+    string ServiceId,
+    string RequestedBy,
+    string? Reason,
+    DateTimeOffset RequestedAt,
+    AgentCommandState State,
+    string? Message = null,
+    DateTimeOffset? CompletedAt = null);
+
+public enum AgentCommandKind
+{
+    RestartService
+}
+
+public enum AgentCommandState
+{
+    Queued,
+    Running,
+    Succeeded,
+    Failed
+}
+
+public sealed record AgentCommandCompletion(
+    bool Succeeded,
+    string Message);

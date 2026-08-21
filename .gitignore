@@ -1,0 +1,16 @@
+bin/
+obj/
+.vs/
+.idea/
+.vscode/
+TestResults/
+coverage/
+node_modules/
+dist/
+outputs/
+src/HomeDashboard.Api/wwwroot/
+.env
+.env.*
+!.env.example
+*.user
+*.suo

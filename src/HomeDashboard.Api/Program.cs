@@ -1,0 +1,131 @@
+using System.Text.Json.Serialization;
+using HomeDashboard.Api;
+using HomeDashboard.Contracts;
+using Microsoft.Extensions.Options;
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
+
+builder.Host.UseWindowsService();
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+builder.Services
+    .AddOptions<DashboardOptions>()
+    .Bind(builder.Configuration.GetSection("Dashboard"))
+    .Validate(options => options.Services.Select(service => service.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() == options.Services.Count, "Service IDs must be unique.");
+
+builder.Services
+    .AddOptions<DashboardSecurityOptions>()
+    .Bind(builder.Configuration.GetSection("Security"));
+
+builder.Services.AddHttpClient("health-checks", client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddHttpClient("news", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("HomeDashboard/0.1");
+});
+
+builder.Services.AddSingleton<IDashboardService, DashboardService>();
+builder.Services.AddSingleton<IServiceStatusProvider, ConfiguredServiceStatusProvider>();
+builder.Services.AddSingleton<ISystemStatsProvider, LocalSystemStatsProvider>();
+builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
+builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
+builder.Services.AddSingleton<FileDashboardStateStore>();
+builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
+builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
+builder.Services.AddSingleton<IApiKeyValidator, ApiKeyValidator>();
+builder.Services.AddSingleton<IBrowserSessionStore, InMemoryBrowserSessionStore>();
+
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy => policy
+        .WithOrigins("http://localhost:5173", "https://localhost:5173", "http://127.0.0.1:5173", "https://127.0.0.1:5173")
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
+});
+
+var app = builder.Build();
+
+app.UseCors();
+app.UseDefaultFiles();
+app.UseStaticFiles();
+app.UseMiddleware<ApiKeyMiddleware>();
+
+app.MapGet("/health", () => Results.Ok(new { status = "ok", checkedAt = DateTimeOffset.UtcNow }));
+app.MapPost("/auth/login", (LoginRequest request, IApiKeyValidator validator, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
+{
+    if (!validator.IsDashboardPasswordValid(request.Password))
+    {
+        return Results.Unauthorized();
+    }
+
+    var session = sessions.Create(out var token);
+    context.Response.Cookies.Append(options.Value.SessionCookieName, token, new CookieOptions
+    {
+        HttpOnly = true,
+        IsEssential = true,
+        SameSite = SameSiteMode.Lax,
+        Secure = context.Request.IsHttps,
+        Expires = session.ExpiresAt
+    });
+
+    return Results.Ok(session);
+});
+app.MapPost("/auth/logout", (IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
+{
+    sessions.Remove(context.Request.Cookies[options.Value.SessionCookieName]);
+    context.Response.Cookies.Delete(options.Value.SessionCookieName);
+    return Results.NoContent();
+});
+app.MapGet("/auth/session", (IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context)
+    => Results.Ok(sessions.Get(context.Request.Cookies[options.Value.SessionCookieName])));
+app.MapGet("/api/dashboard", async (IDashboardService dashboard, CancellationToken cancellationToken)
+    => Results.Ok(await dashboard.GetSnapshotAsync(cancellationToken)));
+app.MapGet("/api/services", async (IServiceStatusProvider services, CancellationToken cancellationToken)
+    => Results.Ok(await services.GetServicesAsync(cancellationToken)));
+app.MapGet("/api/system", (ISystemStatsProvider stats) => Results.Ok(stats.GetStats()));
+app.MapGet("/api/news", async (INewsProvider news, CancellationToken cancellationToken)
+    => Results.Ok(await news.GetNewsAsync(cancellationToken)));
+app.MapPost("/api/services/{id}/restart", (string id, RestartRequest request, IRestartCoordinator restarts) =>
+{
+    var result = restarts.QueueRestart(id, request);
+    return result.State == RestartState.Queued ? Results.Accepted($"/api/services/{id}", result) : Results.BadRequest(result);
+});
+app.MapPost("/api/agent/snapshot", (AgentSnapshot snapshot, IAgentSnapshotStore store) =>
+{
+    store.Save(snapshot);
+    return Results.Accepted($"/api/agent/{snapshot.AgentId}/latest", new { acceptedAt = DateTimeOffset.UtcNow });
+});
+app.MapGet("/api/agents", (IAgentSnapshotStore store) => Results.Ok(store.GetAll()));
+app.MapGet("/api/agent/{agentId}/latest", (string agentId, IAgentSnapshotStore store) =>
+{
+    var snapshot = store.GetLatest(agentId);
+    return snapshot is null ? Results.NotFound() : Results.Ok(snapshot);
+});
+app.MapGet("/api/agent/{agentId}/history", (string agentId, IAgentSnapshotStore store)
+    => Results.Ok(store.GetHistory(agentId)));
+app.MapGet("/api/agent/{agentId}/commands/next", (string agentId, IAgentCommandStore commands) =>
+{
+    var command = commands.DequeueNext(agentId);
+    return command is null ? Results.NoContent() : Results.Ok(command);
+});
+app.MapPost("/api/agent/{agentId}/commands/{commandId}/complete", (string agentId, string commandId, AgentCommandCompletion completion, IAgentCommandStore commands) =>
+{
+    commands.Complete(agentId, commandId, completion);
+    return Results.NoContent();
+});
+app.MapFallbackToFile("index.html");
+
+app.Run();
+
+public partial class Program;
