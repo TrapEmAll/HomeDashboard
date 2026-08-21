@@ -10,6 +10,7 @@ public sealed class DashboardSecurityOptions
     public string? DashboardApiKey { get; init; }
     public string? AgentApiKey { get; init; }
     public string? DashboardPassword { get; init; }
+    public string? DashboardPasswordHash { get; init; }
     public string SessionCookieName { get; init; } = "HomeDashboard.Session";
     public TimeSpan SessionDuration { get; init; } = TimeSpan.FromHours(12);
 }
@@ -30,7 +31,14 @@ public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) 
         => IsValid(apiKey, options.Value.AgentApiKey);
 
     public bool IsDashboardPasswordValid(string? password)
-        => IsValid(password, options.Value.DashboardPassword);
+    {
+        if (!string.IsNullOrWhiteSpace(options.Value.DashboardPasswordHash))
+        {
+            return IsValid(HashSecret(password), options.Value.DashboardPasswordHash);
+        }
+
+        return IsValid(password, options.Value.DashboardPassword);
+    }
 
     private static bool IsValid(string? provided, string? expected)
     {
@@ -48,6 +56,17 @@ public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) 
         var expectedBytes = Encoding.UTF8.GetBytes(expected);
         return providedBytes.Length == expectedBytes.Length
             && CryptographicOperations.FixedTimeEquals(providedBytes, expectedBytes);
+    }
+
+    public static string HashSecret(string? secret)
+    {
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            return "";
+        }
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(secret));
+        return Convert.ToHexString(hash);
     }
 }
 

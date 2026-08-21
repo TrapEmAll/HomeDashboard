@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Activity, LogOut, RefreshCw, ShieldCheck } from "lucide-react";
-import { getDashboard, getSession, login, logout, requestRestart } from "./lib/api";
+import { Activity, Bell, CheckCircle2, History, LogOut, RefreshCw, ShieldCheck, Wand2 } from "lucide-react";
+import { dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, requestRestart, saveSetup } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SystemPanel } from "./components/SystemPanel";
-import type { DashboardSnapshot } from "./types/dashboard";
+import type { AuditEvent, DashboardNotification, DashboardSnapshot, ServiceKind, SetupRequest, SetupStatus } from "./types/dashboard";
 import "./styles.css";
 
 export function App() {
@@ -15,6 +15,23 @@ export function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [setupSaving, setSetupSaving] = useState(false);
+  const [setupForm, setSetupForm] = useState<SetupRequest>({
+    dashboardPassword: "",
+    dashboardApiKey: "",
+    agentApiKey: "",
+    defaultAgentId: "server-pc",
+    services: [
+      { id: "plex", name: "Plex", kind: "Plex", description: "Media server", url: "http://server-pc:32400", healthUrl: "http://server-pc:32400/identity", apiKey: "", restartEnabled: false },
+      { id: "radarr", name: "Radarr", kind: "Radarr", description: "Movie automation", url: "http://server-pc:7878", healthUrl: "http://server-pc:7878/ping", apiKey: "", restartEnabled: false },
+      { id: "sonarr", name: "Sonarr", kind: "Sonarr", description: "TV automation", url: "http://server-pc:8989", healthUrl: "http://server-pc:8989/ping", apiKey: "", restartEnabled: false }
+    ],
+    newsFeeds: [
+      { name: "Ars Technica", url: "https://feeds.arstechnica.com/arstechnica/index" },
+      { name: "The Verge", url: "https://www.theverge.com/rss/index.xml" }
+    ]
+  });
 
   async function load() {
     setLoading(true);
@@ -30,6 +47,10 @@ export function App() {
   }
 
   useEffect(() => {
+    void getSetupStatus()
+      .then((status) => setSetupStatus(status))
+      .catch(() => setSetupStatus(null));
+
     void getSession()
       .then((session) => {
         setAuthenticated(session.isAuthenticated);
@@ -47,8 +68,18 @@ export function App() {
       return;
     }
 
+    const events = new EventSource(dashboardEventsUrl(), { withCredentials: true });
+    events.onmessage = (event) => {
+      setSnapshot(JSON.parse(event.data) as DashboardSnapshot);
+      setLoading(false);
+    };
+    events.onerror = () => events.close();
+
     const handle = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(handle);
+    return () => {
+      events.close();
+      window.clearInterval(handle);
+    };
   }, [authenticated]);
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
@@ -74,8 +105,83 @@ export function App() {
   }
 
   async function restart(serviceId: string) {
+    const service = snapshot?.services.find((candidate) => candidate.id === serviceId);
+    if (!window.confirm(`Restart ${service?.name ?? serviceId}? This can interrupt active users and downloads.`)) {
+      return;
+    }
+
     await requestRestart(serviceId);
     await load();
+  }
+
+  async function completeSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSetupSaving(true);
+    setError(null);
+    try {
+      setSetupStatus(await saveSetup(setupForm));
+    } catch (ex) {
+      setError(ex instanceof Error ? ex.message : "Setup failed.");
+    } finally {
+      setSetupSaving(false);
+    }
+  }
+
+  if (setupStatus?.usesPlaceholderSecrets) {
+    return (
+      <main className="auth-shell">
+        <form className="setup-panel" onSubmit={(event) => void completeSetup(event)}>
+          <div className="login-mark">
+            <Wand2 size={28} />
+          </div>
+          <h1>First-run setup</h1>
+          <p>Set the browser password, agent identity, and starter service cards.</p>
+          <div className="form-grid">
+            <label>
+              Dashboard password
+              <input type="password" value={setupForm.dashboardPassword} onChange={(event) => setSetupForm({ ...setupForm, dashboardPassword: event.target.value })} required />
+            </label>
+            <label>
+              Default agent ID
+              <input value={setupForm.defaultAgentId} onChange={(event) => setSetupForm({ ...setupForm, defaultAgentId: event.target.value })} />
+            </label>
+            <label>
+              Dashboard API key
+              <input value={setupForm.dashboardApiKey ?? ""} onChange={(event) => setSetupForm({ ...setupForm, dashboardApiKey: event.target.value })} placeholder="Generated if blank" />
+            </label>
+            <label>
+              Agent API key
+              <input value={setupForm.agentApiKey ?? ""} onChange={(event) => setSetupForm({ ...setupForm, agentApiKey: event.target.value })} placeholder="Generated if blank" />
+            </label>
+          </div>
+          <div className="setup-list">
+            {setupForm.services.map((service, index) => (
+              <div className="setup-service" key={service.id}>
+                <input value={service.name} onChange={(event) => updateSetupService(index, { name: event.target.value })} />
+                <select value={service.kind} onChange={(event) => updateSetupService(index, { kind: event.target.value as ServiceKind })}>
+                  {["Generic", "Plex", "Sonarr", "Radarr", "Prowlarr", "qBittorrent", "SABnzbd", "Jellyfin"].map((kind) => (
+                    <option key={kind}>{kind}</option>
+                  ))}
+                </select>
+                <input value={service.url ?? ""} onChange={(event) => updateSetupService(index, { url: event.target.value })} placeholder="URL" />
+              </div>
+            ))}
+          </div>
+          <button type="submit" disabled={setupSaving || setupForm.dashboardPassword.length === 0}>
+            {setupSaving ? "Saving..." : "Save setup"}
+          </button>
+          {setupStatus.requiresRestart ? <div className="success-banner"><CheckCircle2 size={18} /> Setup saved. Restart the API to load the new secure values.</div> : null}
+          {error ? <div className="error-banner compact">{error}</div> : null}
+        </form>
+      </main>
+    );
+  }
+
+  function updateSetupService(index: number, patch: Partial<SetupRequest["services"][number]>) {
+    setSetupForm({
+      ...setupForm,
+      services: setupForm.services.map((service, serviceIndex) => serviceIndex === index ? { ...service, ...patch } : service)
+    });
   }
 
   if (!authenticated) {
@@ -130,6 +236,7 @@ export function App() {
             <ServiceGrid services={snapshot.services} onRestart={(serviceId) => void restart(serviceId)} />
           </div>
           <aside className="side-column">
+            <NotificationPanel notifications={snapshot.notifications} />
             <section className="panel">
               <div className="section-heading">
                 <h2>Agents</h2>
@@ -152,6 +259,7 @@ export function App() {
               </div>
             </section>
             <SystemPanel system={snapshot.system} />
+            <AuditPanel events={snapshot.recentAuditEvents} />
             <NewsPanel items={snapshot.news} />
           </aside>
         </div>
@@ -162,5 +270,50 @@ export function App() {
         </div>
       )}
     </main>
+  );
+}
+
+function NotificationPanel({ notifications }: { notifications: DashboardNotification[] }) {
+  return (
+    <section className="panel">
+      <div className="section-heading">
+        <h2>Alerts</h2>
+        <span>{notifications.length}</span>
+      </div>
+      <div className="notice-list">
+        {notifications.length > 0 ? notifications.map((notification) => (
+          <div className={`notice ${notification.severity.toLowerCase()}`} key={notification.id}>
+            <Bell size={16} />
+            <div>
+              <strong>{notification.title}</strong>
+              <span>{notification.message}</span>
+            </div>
+          </div>
+        )) : <div className="empty-state">No active alerts.</div>}
+      </div>
+    </section>
+  );
+}
+
+function AuditPanel({ events }: { events: AuditEvent[] }) {
+  return (
+    <section className="panel">
+      <div className="section-heading">
+        <h2>Audit</h2>
+        <span>{events.length} recent</span>
+      </div>
+      <div className="audit-list">
+        {events.length > 0 ? events.map((event) => (
+          <div className="audit-row" key={event.id}>
+            <History size={15} />
+            <div>
+              <strong>{event.type}</strong>
+              <span>{event.message}</span>
+              <time>{new Date(event.occurredAt).toLocaleString()}</time>
+            </div>
+          </div>
+        )) : <div className="empty-state">No audit events yet.</div>}
+      </div>
+    </section>
   );
 }

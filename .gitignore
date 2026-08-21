@@ -12,5 +12,7 @@ src/HomeDashboard.Api/wwwroot/
 .env
 .env.*
 !.env.example
+appsettings.Local.json
+src/**/appsettings.Local.json
 *.user
 *.suo
