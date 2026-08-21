@@ -5,7 +5,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$exePath = Resolve-Path (Join-Path $PSScriptRoot "../api/HomeDashboard.Api.exe")
+$exeCandidate = Join-Path $PSScriptRoot "../api/HomeDashboard.Api.exe"
+if (-not (Test-Path $exeCandidate)) {
+    throw "HomeDashboard.Api.exe was not found at '$exeCandidate'. Run powershell -ExecutionPolicy Bypass -File .\tools\publish-windows.ps1 first."
+}
+
+$exePath = Resolve-Path $exeCandidate
 $contentRoot = Split-Path $exePath
 $binaryPath = "`"$exePath`" --urls http://0.0.0.0:$Port"
 
