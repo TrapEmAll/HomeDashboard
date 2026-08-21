@@ -4,7 +4,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$exePath = Resolve-Path (Join-Path $PSScriptRoot "../agent/HomeDashboard.Agent.exe")
+$exeCandidate = Join-Path $PSScriptRoot "../agent/HomeDashboard.Agent.exe"
+if (-not (Test-Path $exeCandidate)) {
+    throw "HomeDashboard.Agent.exe was not found at '$exeCandidate'. Run powershell -ExecutionPolicy Bypass -File .\tools\publish-windows.ps1 first."
+}
+
+$exePath = Resolve-Path $exeCandidate
 $binaryPath = "`"$exePath`""
 
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
