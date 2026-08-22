@@ -6,6 +6,7 @@ public sealed class DashboardOptions
 {
     public IReadOnlyList<ServiceDefinition> Services { get; init; } = [];
     public IReadOnlyList<NewsFeedDefinition> NewsFeeds { get; init; } = [];
+    public bool IncludeRecommendedFeeds { get; init; } = true;
     public string DefaultAgentId { get; init; } = "server-pc";
     public string DataPath { get; init; } = "data/homedashboard-state.json";
     public int AgentHistoryLimit { get; init; } = 120;
@@ -27,4 +28,7 @@ public sealed class NewsFeedDefinition
 {
     public required string Name { get; init; }
     public required Uri Url { get; init; }
+    public NewsContentKind Kind { get; init; } = NewsContentKind.Article;
+    public string Category { get; init; } = "Technology";
+    public Uri? ProviderUrl { get; init; }
 }

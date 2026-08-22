@@ -71,7 +71,12 @@ export interface NewsItem {
   url?: string | null;
   publishedAt?: string | null;
   summary?: string | null;
+  kind: NewsContentKind;
+  category: string;
+  providerUrl?: string | null;
 }
+
+export type NewsContentKind = "Article" | "Podcast";
 
 export type NotificationSeverity = "Info" | "Warning" | "Critical";
 

@@ -76,15 +76,35 @@ public sealed class DashboardService(
         var services = MergeServices(configuredServices, latestAgent?.Services);
         var system = latestAgent?.System ?? systemStatsProvider.GetStats();
         var agents = agentSnapshotStore.GetAll();
+        var news = await GetNewsWithinDisplayBudgetAsync(newsTask, cancellationToken);
 
         return new DashboardSnapshot(
             DateTimeOffset.UtcNow,
             services,
             system,
-            await newsTask,
+            news,
             agents,
             BuildNotifications(system, services, agents),
             commandStore.GetRecentAuditEvents(8));
+    }
+
+    private static async Task<IReadOnlyList<NewsItem>> GetNewsWithinDisplayBudgetAsync(
+        Task<IReadOnlyList<NewsItem>> newsTask,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await newsTask.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            _ = newsTask.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            return [];
+        }
     }
 
     private static IReadOnlyList<ServiceCard> MergeServices(
@@ -1039,6 +1059,7 @@ public sealed class RssNewsProvider(
     ILogger<RssNewsProvider> logger) : INewsProvider
 {
     private readonly SemaphoreSlim refreshLock = new(1, 1);
+    private readonly SemaphoreSlim feedConcurrency = new(6, 6);
     private IReadOnlyList<NewsItem> cachedItems = [];
     private DateTimeOffset cacheExpiresAt = DateTimeOffset.MinValue;
 
@@ -1058,33 +1079,19 @@ public sealed class RssNewsProvider(
             }
 
             var client = httpClientFactory.CreateClient("news");
-            var items = new List<NewsItem>();
+            var feeds = GetFeeds();
+            var batches = await Task.WhenAll(feeds.Select(feed => FetchFeedAsync(client, feed, cancellationToken)));
+            var items = batches.SelectMany(batch => batch).ToArray();
 
-            foreach (var feed in options.Value.NewsFeeds)
-            {
-                try
-                {
-                    await using var stream = await client.GetStreamAsync(feed.Url, cancellationToken);
-                    var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
-                    items.AddRange(ParseFeed(feed.Name, document));
-                }
-                catch (Exception ex) when (
-                    ex is HttpRequestException or System.Xml.XmlException
-                    || ex is TaskCanceledException && !cancellationToken.IsCancellationRequested)
-                {
-                    logger.LogWarning(ex, "Failed to read news feed {FeedName}", feed.Name);
-                }
-            }
-
-            if (items.Count > 0 || cachedItems.Count == 0)
+            if (items.Length > 0 || cachedItems.Count == 0)
             {
                 cachedItems = items
                     .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
-                    .Take(12)
+                    .Take(80)
                     .ToArray();
             }
 
-            cacheExpiresAt = DateTimeOffset.UtcNow.AddMinutes(items.Count > 0 ? 10 : 1);
+            cacheExpiresAt = DateTimeOffset.UtcNow.AddMinutes(items.Length > 0 ? 10 : 1);
             return cachedItems;
         }
         finally
@@ -1093,14 +1100,65 @@ public sealed class RssNewsProvider(
         }
     }
 
+    private IReadOnlyList<NewsFeedDefinition> GetFeeds()
+    {
+        var feeds = options.Value.IncludeRecommendedFeeds
+            ? options.Value.NewsFeeds.Concat(RecommendedFeedCatalog.All)
+            : options.Value.NewsFeeds;
+
+        return feeds
+            .GroupBy(feed => feed.Url.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<NewsItem>> FetchFeedAsync(
+        HttpClient client,
+        NewsFeedDefinition feed,
+        CancellationToken cancellationToken)
+    {
+        await feedConcurrency.WaitAsync(cancellationToken);
+        try
+        {
+            await using var stream = await client.GetStreamAsync(feed.Url, cancellationToken);
+            var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
+            return ParseFeed(feed.Name, document, feed.Kind, feed.Category, feed.ProviderUrl)
+                .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
+                .Take(feed.Kind == NewsContentKind.Podcast ? 3 : 4)
+                .ToArray();
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException or System.Xml.XmlException
+            || ex is TaskCanceledException && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Failed to read news feed {FeedName}", feed.Name);
+            return [];
+        }
+        finally
+        {
+            feedConcurrency.Release();
+        }
+    }
+
     internal static IReadOnlyList<NewsItem> ParseFeed(string source, XDocument document)
+        => ParseFeed(source, document, NewsContentKind.Article, "Technology", null);
+
+    internal static IReadOnlyList<NewsItem> ParseFeed(
+        string source,
+        XDocument document,
+        NewsContentKind kind,
+        string category,
+        Uri? providerUrl)
     {
         var rssItems = document.Descendants("item").Select(item => new NewsItem(
             source,
             Read(item, "title") ?? "Untitled",
             TryUri(Read(item, "link")),
             TryDate(Read(item, "pubDate")),
-            Read(item, "description")));
+            Read(item, "description"),
+            kind,
+            category,
+            providerUrl));
 
         XNamespace atom = "http://www.w3.org/2005/Atom";
         var atomItems = document.Descendants(atom + "entry").Select(entry => new NewsItem(
@@ -1108,7 +1166,10 @@ public sealed class RssNewsProvider(
             Read(entry, atom + "title") ?? "Untitled",
             TryUri(entry.Elements(atom + "link").FirstOrDefault()?.Attribute("href")?.Value),
             TryDate(Read(entry, atom + "updated") ?? Read(entry, atom + "published")),
-            Read(entry, atom + "summary")));
+            Read(entry, atom + "summary"),
+            kind,
+            category,
+            providerUrl));
 
         return rssItems.Concat(atomItems).ToArray();
     }

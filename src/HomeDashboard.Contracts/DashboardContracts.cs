@@ -89,7 +89,16 @@ public sealed record NewsItem(
     string Title,
     Uri? Url,
     DateTimeOffset? PublishedAt,
-    string? Summary);
+    string? Summary,
+    NewsContentKind Kind = NewsContentKind.Article,
+    string Category = "Technology",
+    Uri? ProviderUrl = null);
+
+public enum NewsContentKind
+{
+    Article,
+    Podcast
+}
 
 public sealed record RestartRequest(
     string RequestedBy,

@@ -40,6 +40,7 @@ public sealed class RssNewsProviderTests
         var provider = new RssNewsProvider(
             Options.Create(new DashboardOptions
             {
+                IncludeRecommendedFeeds = false,
                 NewsFeeds = [new NewsFeedDefinition { Name = "Example", Url = new Uri("https://example.test/feed") }]
             }),
             new ClientFactory(handler),
@@ -51,6 +52,35 @@ public sealed class RssNewsProviderTests
         Assert.Single(first);
         Assert.Single(second);
         Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public void ParseFeed_preserves_podcast_discovery_metadata()
+    {
+        const string xml = "<rss><channel><item><title>New episode</title><link>https://example.test/episode</link></item></channel></rss>";
+        var spotify = new Uri("https://open.spotify.com/search/Example");
+
+        var item = Assert.Single(RssNewsProvider.ParseFeed(
+            "Example Show",
+            XDocument.Parse(xml),
+            HomeDashboard.Contracts.NewsContentKind.Podcast,
+            "Cybersecurity",
+            spotify));
+
+        Assert.Equal(HomeDashboard.Contracts.NewsContentKind.Podcast, item.Kind);
+        Assert.Equal("Cybersecurity", item.Category);
+        Assert.Equal(spotify, item.ProviderUrl);
+    }
+
+    [Fact]
+    public void Recommended_catalog_has_unique_article_and_podcast_feeds()
+    {
+        Assert.True(RecommendedFeedCatalog.All.Count >= 20);
+        Assert.Contains(RecommendedFeedCatalog.All, feed => feed.Kind == HomeDashboard.Contracts.NewsContentKind.Article);
+        Assert.Contains(RecommendedFeedCatalog.All, feed => feed.Kind == HomeDashboard.Contracts.NewsContentKind.Podcast && feed.ProviderUrl is not null);
+        Assert.Equal(
+            RecommendedFeedCatalog.All.Count,
+            RecommendedFeedCatalog.All.Select(feed => feed.Url.AbsoluteUri).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
     private sealed class ClientFactory(HttpMessageHandler handler) : IHttpClientFactory

@@ -55,6 +55,7 @@ public sealed class SetupService(
                 DefaultAgentId = string.IsNullOrWhiteSpace(request.DefaultAgentId) ? "server-pc" : request.DefaultAgentId,
                 dashboardOptions.Value.DataPath,
                 dashboardOptions.Value.AgentHistoryLimit,
+                dashboardOptions.Value.IncludeRecommendedFeeds,
                 Services = request.Services.Select(ToService).ToArray(),
                 NewsFeeds = request.NewsFeeds.Select(ToFeed).ToArray()
             }
