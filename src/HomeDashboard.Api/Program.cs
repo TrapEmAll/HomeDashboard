@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using HomeDashboard.Api;
 using HomeDashboard.Contracts;
@@ -46,6 +47,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
+
+var eventJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+eventJsonOptions.Converters.Add(new JsonStringEnumConverter());
 
 builder.Services.AddCors(options =>
 {
@@ -118,7 +122,7 @@ app.MapGet("/api/events", async (IDashboardService dashboard, HttpContext contex
     while (!cancellationToken.IsCancellationRequested)
     {
         var snapshot = await dashboard.GetSnapshotAsync(cancellationToken);
-        await context.Response.WriteAsync($"data: {System.Text.Json.JsonSerializer.Serialize(snapshot)}\n\n", cancellationToken);
+        await context.Response.WriteAsync($"data: {JsonSerializer.Serialize(snapshot, eventJsonOptions)}\n\n", cancellationToken);
         await context.Response.Body.FlushAsync(cancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
     }
