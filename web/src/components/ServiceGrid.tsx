@@ -69,11 +69,19 @@ export function ServiceGrid({ services, onRestart }: Props) {
                     <div className="service-row-main">
                       <div className="service-row-title">
                         <strong>{service.name}</strong>
-                        <span className={statusClass[service.status] ?? statusClass.Unknown} title={service.status}>
+                        <span
+                          className={statusClass[service.status] ?? statusClass.Unknown}
+                          title={service.statusMessage ? `${service.status}: ${service.statusMessage}` : service.status}
+                        >
                           <span />
                         </span>
                       </div>
-                      <p>{service.description || service.statusMessage || service.kind}</p>
+                      <p>{service.description || service.kind}</p>
+                      {service.statusMessage ? (
+                        <span className="service-row-message" title={service.statusMessage}>
+                          {service.statusMessage}
+                        </span>
+                      ) : null}
                       <div className="metric-strip">
                         {metrics.slice(0, 2).map((metric) => (
                           <span className="metric-chip" key={`${service.id}-${metric.label}`}>

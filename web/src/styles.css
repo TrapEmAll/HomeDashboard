@@ -1116,6 +1116,29 @@ button:active:not(:disabled) {
   white-space: nowrap;
 }
 
+.service-row-message {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: rgba(223, 243, 241, 0.58);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-row.online .service-row-message {
+  color: rgba(112, 255, 181, 0.72);
+}
+
+.service-row.degraded .service-row-message {
+  color: rgba(255, 211, 98, 0.78);
+}
+
+.service-row.offline .service-row-message {
+  color: rgba(255, 154, 163, 0.88);
+}
+
 .service-row .status {
   width: 10px;
   height: 10px;

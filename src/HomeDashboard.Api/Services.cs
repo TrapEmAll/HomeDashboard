@@ -417,6 +417,8 @@ public sealed class ConfiguredServiceStatusProvider(
         ServiceDefinition service,
         CancellationToken cancellationToken)
     {
+        service = NormalizeServiceUris(service);
+
         if (service.Url is not null)
         {
             var integrationCard = await TryCheckIntegrationAsync(client, service, cancellationToken);
@@ -433,7 +435,7 @@ public sealed class ConfiguredServiceStatusProvider(
 
         try
         {
-            using var response = await client.GetAsync(service.HealthUrl, cancellationToken);
+            using var response = await client.GetAsync(BuildRequestUri(service.HealthUrl), cancellationToken);
             var status = response.IsSuccessStatusCode ? ServiceStatus.Online : ToStatus(response.StatusCode);
             return ToCard(service, status, $"Health check returned {(int)response.StatusCode}.", []);
         }
@@ -469,7 +471,7 @@ public sealed class ConfiguredServiceStatusProvider(
         ServiceDefinition service,
         CancellationToken cancellationToken)
     {
-        var uri = BuildUri(service.Url!, "/identity", string.IsNullOrWhiteSpace(service.ApiKey) ? null : $"X-Plex-Token={Uri.EscapeDataString(service.ApiKey)}");
+        var uri = BuildRequestUri(service.Url!, "/identity", string.IsNullOrWhiteSpace(service.ApiKey) ? null : $"X-Plex-Token={Uri.EscapeDataString(service.ApiKey)}");
 
         try
         {
@@ -506,7 +508,7 @@ public sealed class ConfiguredServiceStatusProvider(
             return null;
         }
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, "/api/v3/system/status"));
+        using var request = new HttpRequestMessage(HttpMethod.Get, BuildRequestUri(service.Url!, "/api/v3/system/status"));
         request.Headers.Add("X-Api-Key", service.ApiKey);
 
         try
@@ -554,7 +556,7 @@ public sealed class ConfiguredServiceStatusProvider(
     {
         try
         {
-            var uri = BuildUri(service.Url!, "/api/v2/app/version");
+            var uri = BuildRequestUri(service.Url!, "/api/v2/app/version");
             var version = await client.GetStringAsync(uri, cancellationToken);
             var metrics = new List<ServiceMetric> { new("Version", version.Trim()) };
             await AddQbittorrentTransferAsync(client, service, metrics, cancellationToken);
@@ -583,7 +585,7 @@ public sealed class ConfiguredServiceStatusProvider(
 
         try
         {
-            var uri = BuildUri(service.Url!, "/api", query);
+            var uri = BuildRequestUri(service.Url!, "/api", query);
             var document = await client.GetFromJsonAsync<JsonDocument>(uri, cancellationToken);
             var version = ReadString(document!.RootElement, "version");
             var metrics = new List<ServiceMetric>();
@@ -608,7 +610,7 @@ public sealed class ConfiguredServiceStatusProvider(
     {
         try
         {
-            var uri = BuildUri(service.Url!, "/System/Info/Public");
+            var uri = BuildRequestUri(service.Url!, "/System/Info/Public");
             var document = await client.GetFromJsonAsync<JsonDocument>(uri, cancellationToken);
             var root = document!.RootElement;
             var version = ReadString(root, "Version");
@@ -636,6 +638,27 @@ public sealed class ConfiguredServiceStatusProvider(
         return builder.Uri;
     }
 
+    private static Uri BuildRequestUri(Uri baseUri, string path, string? query = null)
+        => PreferIpv4Loopback(BuildUri(baseUri, path, query));
+
+    private static Uri BuildRequestUri(Uri uri)
+        => PreferIpv4Loopback(uri);
+
+    private static Uri PreferIpv4Loopback(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri || !uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return uri;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Host = "127.0.0.1"
+        };
+
+        return builder.Uri;
+    }
+
     private static async Task AddPlexSessionsAsync(
         HttpClient client,
         ServiceDefinition service,
@@ -649,7 +672,7 @@ public sealed class ConfiguredServiceStatusProvider(
 
         try
         {
-            var uri = BuildUri(service.Url!, "/status/sessions", $"X-Plex-Token={Uri.EscapeDataString(service.ApiKey)}");
+            var uri = BuildRequestUri(service.Url!, "/status/sessions", $"X-Plex-Token={Uri.EscapeDataString(service.ApiKey)}");
             var xml = await client.GetStringAsync(uri, cancellationToken);
             var count = XDocument.Parse(xml).Root?.Attribute("size")?.Value;
             AddMetric(metrics, "Streams", count);
@@ -667,7 +690,7 @@ public sealed class ConfiguredServiceStatusProvider(
     {
         try
         {
-            var document = await client.GetFromJsonAsync<JsonDocument>(BuildUri(service.Url!, "/api/v2/transfer/info"), cancellationToken);
+            var document = await client.GetFromJsonAsync<JsonDocument>(BuildRequestUri(service.Url!, "/api/v2/transfer/info"), cancellationToken);
             var root = document!.RootElement;
             AddMetric(metrics, "Down", FormatBytesPerSecond(ReadLong(root, "dl_info_speed")));
             AddMetric(metrics, "Up", FormatBytesPerSecond(ReadLong(root, "up_info_speed")));
@@ -691,7 +714,7 @@ public sealed class ConfiguredServiceStatusProvider(
 
         try
         {
-            var document = await client.GetFromJsonAsync<JsonDocument>(BuildUri(service.Url!, "/api", query), cancellationToken);
+            var document = await client.GetFromJsonAsync<JsonDocument>(BuildRequestUri(service.Url!, "/api", query), cancellationToken);
             if (document!.RootElement.TryGetProperty("queue", out var queue))
             {
                 AddMetric(metrics, "Queue", ReadString(queue, "noofslots"));
@@ -716,7 +739,7 @@ public sealed class ConfiguredServiceStatusProvider(
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, "/Sessions"));
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildRequestUri(service.Url!, "/Sessions"));
             request.Headers.Add("X-Emby-Token", service.ApiKey);
             using var response = await client.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -740,7 +763,7 @@ public sealed class ConfiguredServiceStatusProvider(
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, path));
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildRequestUri(service.Url!, path));
             request.Headers.Add("X-Api-Key", service.ApiKey);
             using var response = await client.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -766,7 +789,7 @@ public sealed class ConfiguredServiceStatusProvider(
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, path));
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildRequestUri(service.Url!, path));
             request.Headers.Add("X-Api-Key", service.ApiKey);
             using var response = await client.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -847,6 +870,52 @@ public sealed class ConfiguredServiceStatusProvider(
 
     private static ServiceStatus ToStatus(HttpStatusCode statusCode)
         => (int)statusCode >= 500 ? ServiceStatus.Degraded : ServiceStatus.Offline;
+
+    private static ServiceDefinition NormalizeServiceUris(ServiceDefinition service)
+    {
+        var url = NormalizeConfiguredUri(service.Url);
+        var healthUrl = NormalizeConfiguredUri(service.HealthUrl);
+
+        if (url == service.Url && healthUrl == service.HealthUrl)
+        {
+            return service;
+        }
+
+        return new ServiceDefinition
+        {
+            Id = service.Id,
+            Name = service.Name,
+            Kind = service.Kind,
+            Description = service.Description,
+            Url = url,
+            HealthUrl = healthUrl,
+            ApiKey = service.ApiKey,
+            RestartEnabled = service.RestartEnabled
+        };
+    }
+
+    private static Uri? NormalizeConfiguredUri(Uri? uri)
+    {
+        if (uri is null)
+        {
+            return null;
+        }
+
+        if (uri.IsAbsoluteUri)
+        {
+            return uri;
+        }
+
+        var value = uri.ToString().Trim();
+        var markdownStart = value.IndexOf("](", StringComparison.Ordinal);
+        if (value.StartsWith("[", StringComparison.Ordinal) && markdownStart > 0 && value.EndsWith(")", StringComparison.Ordinal))
+        {
+            value = value[(markdownStart + 2)..^1].Trim();
+        }
+
+        value = value.Trim('<', '>');
+        return Uri.TryCreate(value, UriKind.Absolute, out var normalized) ? normalized : null;
+    }
 }
 
 public sealed class LocalSystemStatsProvider : ISystemStatsProvider
