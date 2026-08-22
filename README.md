@@ -2,6 +2,8 @@
 
 HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, first-run setup, browser login, alerts, audit history, live updates, and guarded restart commands.
 
+The dashboard command center includes a dark responsive service wall, live health filtering and search, persistent favorites, compact and comfortable density modes, a hideable activity rail, recent health pulse history, richer storage and RSS details, and session-expiry recovery. These display preferences are stored only in the current browser.
+
 ## Repository layout
 
 ```text
