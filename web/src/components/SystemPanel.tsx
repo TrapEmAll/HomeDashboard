@@ -14,24 +14,29 @@ export function SystemPanel({ system }: Props) {
     capturedAt: new Date().toISOString()
   };
   const disks = Array.isArray(stats.disks) ? stats.disks : [];
+  const cpuPercent = clampPercent(stats.cpuPercent);
+  const memoryPercent = clampPercent(stats.memoryUsedPercent);
 
   return (
-    <section className="panel">
+    <section className="panel system-panel">
       <div className="section-heading">
-        <h2>{stats.hostname}</h2>
+        <div>
+          <span className="section-kicker">Host telemetry</span>
+          <h2>{stats.hostname}</h2>
+        </div>
         <span>{new Date(stats.capturedAt).toLocaleTimeString()}</span>
       </div>
       <div className="stat-grid">
-        <Metric icon={<Cpu size={19} />} label="CPU" value={`${formatPercent(stats.cpuPercent)}%`} />
-        <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${formatPercent(stats.memoryUsedPercent)}%`} />
-        <Metric icon={<HardDrive size={19} />} label="Disks" value={`${disks.length}`} />
+        <Metric icon={<Cpu size={19} />} label="CPU" value={`${formatPercent(cpuPercent)}%`} tone="blue" />
+        <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${formatPercent(memoryPercent)}%`} tone="green" />
+        <Metric icon={<HardDrive size={19} />} label="Disks" value={`${disks.length}`} tone="amber" />
       </div>
       <div className="disk-list">
         {disks.map((disk) => {
-          const usedPercent = disk.totalBytes > 0 ? ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100 : 0;
+          const usedPercent = clampPercent(disk.totalBytes > 0 ? ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100 : 0);
           return (
             <div className="disk-row" key={disk.name}>
-              <span>{disk.name}</span>
+              <span className="disk-name">{disk.name}</span>
               <div className="meter">
                 <div style={{ width: `${Math.min(usedPercent, 100)}%` }} />
               </div>
@@ -44,16 +49,22 @@ export function SystemPanel({ system }: Props) {
   );
 }
 
-function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function Metric({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone: string }) {
   return (
-    <div className="metric">
-      {icon}
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className={`metric ${tone}`}>
+      <div className="metric-icon">{icon}</div>
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
     </div>
   );
 }
 
 function formatPercent(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : "0.0";
+}
+
+function clampPercent(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.min(value, 100)) : 0;
 }

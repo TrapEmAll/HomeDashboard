@@ -8,9 +8,12 @@ interface Props {
 export function NewsPanel({ items }: Props) {
   const newsItems = Array.isArray(items) ? items : [];
   return (
-    <section className="panel">
+    <section className="panel news-panel">
       <div className="section-heading">
-        <h2>News</h2>
+        <div>
+          <span className="section-kicker">Feeds</span>
+          <h2>News</h2>
+        </div>
         <span>{newsItems.length} latest</span>
       </div>
       <div className="news-list">

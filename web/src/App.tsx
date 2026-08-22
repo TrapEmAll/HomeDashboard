@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Activity, Bell, CheckCircle2, History, LogOut, RefreshCw, ShieldCheck, Wand2 } from "lucide-react";
+import { Activity, Bell, CheckCircle2, Clock3, History, LogOut, RefreshCw, Server, ShieldCheck, Signal, TriangleAlert, Wand2 } from "lucide-react";
 import { dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
 import { ServiceGrid } from "./components/ServiceGrid";
@@ -220,14 +220,26 @@ export function App() {
     );
   }
 
+  const services = snapshot?.services ?? [];
+  const agents = snapshot?.agents ?? [];
+  const alerts = snapshot?.notifications ?? [];
+  const onlineCount = services.filter((service) => service.status === "Online").length;
+  const issueCount = services.filter((service) => service.status === "Offline" || service.status === "Degraded").length;
+  const lastUpdated = snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleTimeString() : "--";
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div>
+          <span className="eyebrow">Home operations</span>
           <h1>HomeDashboard</h1>
-          <p>Services, host health, and news in one place.</p>
+          <p>Live service health, host telemetry, restart controls, and news.</p>
         </div>
         <div className="topbar-actions">
+          <div className="live-pill" title="Dashboard update status">
+            <Signal size={16} />
+            <span>{liveError ? "Polling" : "Live"}</span>
+          </div>
           <button className="refresh-button" type="button" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={18} />
             Refresh
@@ -242,38 +254,91 @@ export function App() {
       {liveError ? <div className="warning-banner">{liveError}</div> : null}
 
       {snapshot ? (
-        <div className="dashboard-layout">
-          <div className="main-column">
-            <ServiceGrid services={snapshot.services} onRestart={(serviceId) => void restart(serviceId)} />
-          </div>
-          <aside className="side-column">
-            <NotificationPanel notifications={snapshot.notifications} />
-            <section className="panel">
-              <div className="section-heading">
-                <h2>Agents</h2>
-                <span>{snapshot.agents.length} connected</span>
+        <>
+          <section className="overview-strip" aria-label="Dashboard summary">
+            <div className="overview-card strong">
+              <div className="overview-icon online">
+                <Server size={20} />
               </div>
-              <div className="agent-list">
-                {snapshot.agents.length > 0 ? (
-                  snapshot.agents.map((agent) => (
-                    <div className="agent-row" key={agent.agentId}>
-                      <span className={`status ${agent.status.toLowerCase()}`}>{agent.status}</span>
-                      <div>
-                        <strong>{agent.hostname}</strong>
-                        <span>{agent.servicesMonitored} services · {new Date(agent.lastSeenAt).toLocaleTimeString()}</span>
+              <div>
+                <span>Online services</span>
+                <strong>{onlineCount}/{services.length}</strong>
+              </div>
+            </div>
+            <div className="overview-card">
+              <div className={`overview-icon ${issueCount > 0 ? "critical" : "quiet"}`}>
+                <TriangleAlert size={20} />
+              </div>
+              <div>
+                <span>Needs attention</span>
+                <strong>{issueCount}</strong>
+              </div>
+            </div>
+            <div className="overview-card">
+              <div className="overview-icon agent">
+                <Activity size={20} />
+              </div>
+              <div>
+                <span>Agents</span>
+                <strong>{agents.length}</strong>
+              </div>
+            </div>
+            <div className="overview-card">
+              <div className="overview-icon alerts">
+                <Bell size={20} />
+              </div>
+              <div>
+                <span>Alerts</span>
+                <strong>{alerts.length}</strong>
+              </div>
+            </div>
+            <div className="overview-card timestamp">
+              <div className="overview-icon quiet">
+                <Clock3 size={20} />
+              </div>
+              <div>
+                <span>Last update</span>
+                <strong>{lastUpdated}</strong>
+              </div>
+            </div>
+          </section>
+
+          <div className="dashboard-layout">
+            <div className="main-column">
+              <ServiceGrid services={services} onRestart={(serviceId) => void restart(serviceId)} />
+            </div>
+            <aside className="side-column">
+              <NotificationPanel notifications={alerts} />
+              <section className="panel agents-panel">
+                <div className="section-heading">
+                  <div>
+                    <span className="section-kicker">Remote heartbeat</span>
+                    <h2>Agents</h2>
+                  </div>
+                  <span>{agents.length} connected</span>
+                </div>
+                <div className="agent-list">
+                  {agents.length > 0 ? (
+                    agents.map((agent) => (
+                      <div className="agent-row" key={agent.agentId}>
+                        <span className={`status ${agent.status.toLowerCase()}`}>{agent.status}</span>
+                        <div>
+                          <strong>{agent.hostname}</strong>
+                          <span>{agent.servicesMonitored} services · {new Date(agent.lastSeenAt).toLocaleTimeString()}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state">No agent heartbeat yet.</div>
-                )}
-              </div>
-            </section>
-            <SystemPanel system={snapshot.system} />
-            <AuditPanel events={snapshot.recentAuditEvents} />
-            <NewsPanel items={snapshot.news} />
-          </aside>
-        </div>
+                    ))
+                  ) : (
+                    <div className="empty-state">No agent heartbeat yet.</div>
+                  )}
+                </div>
+              </section>
+              <SystemPanel system={snapshot.system} />
+              <AuditPanel events={snapshot.recentAuditEvents} />
+              <NewsPanel items={snapshot.news} />
+            </aside>
+          </div>
+        </>
       ) : (
         <div className="loading-panel">
           <Activity size={22} />
@@ -289,7 +354,10 @@ function NotificationPanel({ notifications }: { notifications: DashboardNotifica
   return (
     <section className="panel">
       <div className="section-heading">
-        <h2>Alerts</h2>
+        <div>
+          <span className="section-kicker">Signal check</span>
+          <h2>Alerts</h2>
+        </div>
         <span>{items.length}</span>
       </div>
       <div className="notice-list">
@@ -312,7 +380,10 @@ function AuditPanel({ events }: { events: AuditEvent[] }) {
   return (
     <section className="panel">
       <div className="section-heading">
-        <h2>Audit</h2>
+        <div>
+          <span className="section-kicker">Recent activity</span>
+          <h2>Audit</h2>
+        </div>
         <span>{items.length} recent</span>
       </div>
       <div className="audit-list">
