@@ -85,11 +85,18 @@ The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
 - `tools/install-api-service.ps1` and `tools/install-agent-service.ps1` for optional Windows service installation.
 - `tools/install-homedashboard.ps1`, a combined installer wrapper for the packaged API and agent services.
 - `tools/update-homedashboard.ps1`, an updater that downloads a GitHub branch, preserves local config/data, rebuilds, reinstalls, and restarts the services.
+- `tools/open-elevated-update.ps1`, a launcher that opens an elevated PowerShell window in the current source folder and runs the updater.
 
 Update an existing source-based install from GitHub with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\update-homedashboard.ps1
+```
+
+Or launch the updater in an elevated PowerShell window from the current source folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\open-elevated-update.ps1
 ```
 
 ## Configuration
