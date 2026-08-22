@@ -13,9 +13,10 @@ $exePath = Resolve-Path $exeCandidate
 $binaryPath = "`"$exePath`""
 
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    throw "Service '$ServiceName' already exists. Stop and delete it first if you want to reinstall."
+    Write-Host "Service '$ServiceName' already exists. Skipping create."
+    return
 }
 
-sc.exe create $ServiceName binPath= $binaryPath start= auto DisplayName= $DisplayName
+New-Service -Name $ServiceName -BinaryPathName $binaryPath -DisplayName $DisplayName -StartupType Automatic
 sc.exe description $ServiceName "Publishes Windows service and system health snapshots to HomeDashboard."
 Write-Host "Created $ServiceName. Start it with: Start-Service $ServiceName"

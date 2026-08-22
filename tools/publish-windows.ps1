@@ -20,7 +20,7 @@ $zipPath = Join-Path $repoRoot "outputs/HomeDashboard-Windows.zip"
 Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 Remove-Item $apiWwwroot -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $apiWwwroot, $apiOutput, $agentOutput, $toolsOutput | Out-Null
+New-Item -ItemType Directory -Path $apiWwwroot, $apiOutput, $agentOutput, $toolsOutput -Force | Out-Null
 
 Push-Location $webRoot
 try {
