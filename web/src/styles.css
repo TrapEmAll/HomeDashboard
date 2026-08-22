@@ -913,3 +913,337 @@ button:active:not(:disabled) {
     display: grid;
   }
 }
+
+/* Reference-inspired compact wall layout */
+.app-shell {
+  color: #eef7f7;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(69, 124, 113, 0.28), transparent 28%),
+    radial-gradient(circle at 84% 4%, rgba(35, 105, 139, 0.22), transparent 24%),
+    linear-gradient(115deg, rgba(6, 16, 19, 0.96), rgba(13, 31, 32, 0.9)),
+    repeating-linear-gradient(60deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 17px);
+  background-blend-mode: screen, screen, normal, normal;
+}
+
+.topbar,
+.overview-strip,
+.dashboard-layout {
+  max-width: 1760px;
+}
+
+.topbar h1,
+.section-heading h2,
+.service-column-heading h3 {
+  color: #f8ffff;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
+}
+
+.topbar p,
+.eyebrow,
+.section-kicker {
+  color: rgba(226, 244, 244, 0.72);
+}
+
+.panel,
+.overview-card,
+.live-pill,
+.refresh-button,
+.icon-button {
+  border-color: rgba(207, 239, 232, 0.18);
+  background: rgba(7, 21, 24, 0.54);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.overview-card.strong {
+  background: rgba(5, 18, 21, 0.72);
+}
+
+.overview-card span,
+.section-heading > span {
+  color: rgba(223, 243, 241, 0.72);
+}
+
+.overview-card strong,
+.refresh-button,
+.icon-button {
+  color: #f7ffff;
+}
+
+.overview-icon.quiet {
+  background: rgba(255, 255, 255, 0.09);
+  color: #c9dddf;
+}
+
+.overview-icon.agent {
+  background: rgba(59, 190, 225, 0.16);
+  color: #80e6ff;
+}
+
+.overview-icon.alerts {
+  background: rgba(255, 211, 98, 0.18);
+  color: #ffd36b;
+}
+
+.overview-icon.online {
+  background: rgba(43, 230, 137, 0.16);
+  color: #51f2a3;
+}
+
+.overview-icon.critical {
+  background: rgba(255, 79, 97, 0.16);
+  color: #ff7b86;
+}
+
+.section-heading > span {
+  border-color: rgba(207, 239, 232, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.dashboard-layout {
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+
+.services-panel {
+  min-height: 620px;
+  background: rgba(4, 15, 18, 0.5);
+}
+
+.service-grid {
+  display: none;
+}
+
+.service-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.service-column {
+  min-width: 0;
+  border-left: 1px solid rgba(210, 239, 234, 0.24);
+  padding-left: 16px;
+}
+
+.service-column:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.service-column-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.service-column-heading h3 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.service-column-heading span {
+  min-width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(207, 239, 232, 0.18);
+  border-radius: 999px;
+  color: rgba(223, 243, 241, 0.78);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.service-list {
+  display: grid;
+  gap: 11px;
+}
+
+.service-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.service-row:hover {
+  border-color: rgba(207, 239, 232, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.service-row .service-icon {
+  width: 38px;
+  height: 38px;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #eaffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.service-row-main {
+  min-width: 0;
+}
+
+.service-row-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.service-row-title strong {
+  overflow: hidden;
+  color: #f8ffff;
+  font-size: 14px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-row p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: rgba(223, 243, 241, 0.62);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-row .status {
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  border: 0;
+  padding: 0;
+  font-size: 0;
+  box-shadow: 0 0 14px currentColor;
+}
+
+.service-row .status span {
+  width: 100%;
+  height: 100%;
+}
+
+.service-row .metric-strip {
+  margin-top: 5px;
+}
+
+.service-row .metric-chip {
+  min-height: 20px;
+  border-color: rgba(207, 239, 232, 0.12);
+  color: rgba(223, 243, 241, 0.72);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 7px;
+  font-size: 10px;
+}
+
+.service-row .metric-chip b {
+  color: #ffffff;
+}
+
+.service-row .service-actions {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.service-row:hover .service-actions {
+  opacity: 1;
+}
+
+.service-row .icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.column-empty {
+  color: rgba(223, 243, 241, 0.5);
+  font-size: 12px;
+}
+
+.side-column .panel,
+.news-panel,
+.system-panel {
+  background: rgba(6, 19, 22, 0.56);
+}
+
+.system-panel {
+  color: #f8ffff;
+}
+
+.agent-row,
+.notice,
+.audit-row,
+.news-item {
+  border-color: rgba(207, 239, 232, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.agent-row span:not(.status),
+.notice span,
+.audit-row span,
+.audit-row time,
+.news-item span,
+.news-item time,
+.empty-state {
+  color: rgba(223, 243, 241, 0.62);
+}
+
+.notice strong,
+.audit-row strong,
+.news-item strong,
+.agent-row strong {
+  color: #f8ffff;
+}
+
+.metric {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 1380px) {
+  .service-columns {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .service-column:nth-child(odd) {
+    border-left: 0;
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 1180px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .side-column {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .service-columns,
+  .side-column {
+    grid-template-columns: 1fr;
+  }
+
+  .service-column {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .service-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .service-row .service-actions {
+    grid-column: 2;
+    opacity: 1;
+  }
+}
