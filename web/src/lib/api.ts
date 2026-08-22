@@ -1,4 +1,4 @@
-import type { AuditEvent, DashboardNotification, DashboardSnapshot, NewsContentKind, NewsItem, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats } from "../types/dashboard";
+import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, NewsContentKind, NewsItem, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -16,7 +16,8 @@ export interface AuthSession {
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new ApiError(response.status, `Request failed with ${response.status}`);
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new ApiError(response.status, body?.error ?? `Request failed with ${response.status}`);
   }
 
   return response.json() as Promise<T>;
@@ -73,6 +74,26 @@ export async function getDashboard(): Promise<DashboardSnapshot> {
   return normalizeDashboard(await response.json());
 }
 
+export async function getDashboardSettings(): Promise<DashboardSettings> {
+  const response = await fetch(`${apiBaseUrl}/api/settings`, { credentials: "include" });
+  return normalizeSettings(await readJson<unknown>(response));
+}
+
+export async function updateDashboardSettings(request: UpdateDashboardSettingsRequest): Promise<DashboardSettings> {
+  const response = await fetch(`${apiBaseUrl}/api/settings`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  return normalizeSettings(await readJson<unknown>(response));
+}
+
+export async function getAgentHistory(agentId: string): Promise<AgentHistoryPoint[]> {
+  const response = await fetch(`${apiBaseUrl}/api/agent/${encodeURIComponent(agentId)}/history`, { credentials: "include" });
+  return asArray(await readJson<unknown>(response), normalizeHistoryPoint);
+}
+
 export async function requestRestart(serviceId: string): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/api/services/${serviceId}/restart`, {
     method: "POST",
@@ -113,6 +134,51 @@ function normalizeDashboard(raw: unknown): DashboardSnapshot {
     }),
     notifications: asArray<DashboardNotification>(read(value, "notifications", "Notifications"), normalizeNotification),
     recentAuditEvents: asArray<AuditEvent>(read(value, "recentAuditEvents", "RecentAuditEvents"), normalizeAuditEvent)
+  };
+}
+
+function normalizeSettings(raw: unknown): DashboardSettings {
+  const value = asRecord(raw);
+  return {
+    defaultAgentId: asString(read(value, "defaultAgentId", "DefaultAgentId"), "server-pc"),
+    includeRecommendedFeeds: read(value, "includeRecommendedFeeds", "IncludeRecommendedFeeds") !== false,
+    services: asArray(read(value, "services", "Services"), (service) => {
+      const item = asRecord(service);
+      return {
+        id: asString(read(item, "id", "Id"), "service"),
+        name: asString(read(item, "name", "Name"), "Service"),
+        kind: normalizeKind(read(item, "kind", "Kind")),
+        description: asString(read(item, "description", "Description"), ""),
+        url: asOptionalString(read(item, "url", "Url")),
+        healthUrl: asOptionalString(read(item, "healthUrl", "HealthUrl")),
+        hasApiKey: Boolean(read(item, "hasApiKey", "HasApiKey")),
+        restartEnabled: Boolean(read(item, "restartEnabled", "RestartEnabled"))
+      };
+    }),
+    newsFeeds: asArray(read(value, "newsFeeds", "NewsFeeds"), (feed) => {
+      const item = asRecord(feed);
+      return {
+        name: asString(read(item, "name", "Name"), "Feed"),
+        url: asString(read(item, "url", "Url"), ""),
+        kind: normalizeNewsKind(read(item, "kind", "Kind")),
+        category: asString(read(item, "category", "Category"), "Technology"),
+        providerUrl: asOptionalString(read(item, "providerUrl", "ProviderUrl"))
+      };
+    }),
+    requiresRestart: Boolean(read(value, "requiresRestart", "RequiresRestart"))
+  };
+}
+
+function normalizeHistoryPoint(raw: unknown): AgentHistoryPoint {
+  const value = asRecord(raw);
+  return {
+    agentId: asString(read(value, "agentId", "AgentId"), "agent"),
+    capturedAt: asString(read(value, "capturedAt", "CapturedAt"), new Date().toISOString()),
+    cpuPercent: asNumber(read(value, "cpuPercent", "CpuPercent"), 0),
+    memoryUsedPercent: asNumber(read(value, "memoryUsedPercent", "MemoryUsedPercent"), 0),
+    servicesOnline: asNumber(read(value, "servicesOnline", "ServicesOnline"), 0),
+    servicesDegraded: asNumber(read(value, "servicesDegraded", "ServicesDegraded"), 0),
+    servicesOffline: asNumber(read(value, "servicesOffline", "ServicesOffline"), 0)
   };
 }
 

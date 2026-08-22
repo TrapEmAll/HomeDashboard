@@ -1,11 +1,12 @@
-import { Cpu, HardDrive, MemoryStick, Server } from "lucide-react";
-import type { SystemStats } from "../types/dashboard";
+import { Cpu, HardDrive, MemoryStick, Server, TrendingUp } from "lucide-react";
+import type { AgentHistoryPoint, SystemStats } from "../types/dashboard";
 
 interface Props {
   system?: SystemStats | null;
+  history?: AgentHistoryPoint[];
 }
 
-export function SystemPanel({ system }: Props) {
+export function SystemPanel({ system, history = [] }: Props) {
   const stats = system ?? {
     hostname: "Local host",
     cpuPercent: 0,
@@ -31,6 +32,13 @@ export function SystemPanel({ system }: Props) {
         <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${formatPercent(memoryPercent)}%`} tone="green" />
         <Metric icon={<HardDrive size={19} />} label="Disks" value={`${disks.length}`} tone="amber" />
       </div>
+      {history.length > 1 ? (
+        <div className="telemetry-history">
+          <div className="telemetry-history-heading"><TrendingUp size={14} /><span>Recent agent history</span><small>{history.length} samples</small></div>
+          <Trend label="CPU" values={history.map((point) => point.cpuPercent)} tone="cyan" />
+          <Trend label="Memory" values={history.map((point) => point.memoryUsedPercent)} tone="green" />
+        </div>
+      ) : null}
       <div className="disk-list">
         {disks.map((disk) => {
           const usedPercent = clampPercent(disk.totalBytes > 0 ? ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100 : 0);
@@ -46,6 +54,21 @@ export function SystemPanel({ system }: Props) {
         })}
       </div>
     </section>
+  );
+}
+
+function Trend({ label, values, tone }: { label: string; values: number[]; tone: "cyan" | "green" }) {
+  const samples = values.slice(-36).map(clampPercent);
+  const points = samples.map((value, index) => `${samples.length === 1 ? 0 : index / (samples.length - 1) * 100},${28 - value / 100 * 26}`).join(" ");
+  const current = samples.at(-1) ?? 0;
+  return (
+    <div className={`telemetry-trend ${tone}`}>
+      <span>{label}</span>
+      <svg viewBox="0 0 100 28" preserveAspectRatio="none" aria-label={`${label} history, currently ${formatPercent(current)} percent`}>
+        <polyline points={points} vectorEffect="non-scaling-stroke" />
+      </svg>
+      <strong>{formatPercent(current)}%</strong>
+    </div>
   );
 }
 

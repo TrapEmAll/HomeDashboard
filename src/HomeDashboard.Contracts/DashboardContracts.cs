@@ -218,3 +218,44 @@ public sealed record ServiceSetupRequest(
 public sealed record NewsFeedSetupRequest(
     string Name,
     string Url);
+
+public sealed record DashboardSettings(
+    string DefaultAgentId,
+    bool IncludeRecommendedFeeds,
+    IReadOnlyList<ServiceSetting> Services,
+    IReadOnlyList<NewsFeedSetting> NewsFeeds,
+    bool RequiresRestart = false);
+
+public sealed record ServiceSetting(
+    string Id,
+    string Name,
+    ServiceKind Kind,
+    string Description,
+    string? Url,
+    string? HealthUrl,
+    bool HasApiKey,
+    bool RestartEnabled);
+
+public sealed record NewsFeedSetting(
+    string Name,
+    string Url,
+    NewsContentKind Kind,
+    string Category,
+    string? ProviderUrl);
+
+public sealed record UpdateDashboardSettingsRequest(
+    string DefaultAgentId,
+    bool IncludeRecommendedFeeds,
+    IReadOnlyList<UpdateServiceSetting> Services,
+    IReadOnlyList<NewsFeedSetting> NewsFeeds);
+
+public sealed record UpdateServiceSetting(
+    string Id,
+    string Name,
+    ServiceKind Kind,
+    string Description,
+    string? Url,
+    string? HealthUrl,
+    string? ApiKey,
+    bool ClearApiKey,
+    bool RestartEnabled);

@@ -22,12 +22,108 @@ public sealed class SetupServiceTests
                 DashboardPassword = "",
                 DashboardPasswordHash = ApiKeyValidator.HashSecret("dashboard-password")
             }),
-            new InMemoryAgentCommandStore());
+            new InMemoryAgentCommandStore(),
+            new InMemorySettingsWriter());
 
         var status = setup.GetStatus();
 
         Assert.True(status.IsConfigured);
         Assert.False(status.UsesPlaceholderSecrets);
+    }
+
+    [Fact]
+    public void Settings_mask_service_api_keys()
+    {
+        var setup = CreateSetup(out _);
+
+        var settings = setup.GetSettings();
+
+        var service = Assert.Single(settings.Services);
+        Assert.True(service.HasApiKey);
+        Assert.DoesNotContain("plex-secret", settings.ToString());
+    }
+
+    [Fact]
+    public async Task Updating_settings_preserves_existing_secrets_and_service_api_key()
+    {
+        var setup = CreateSetup(out var writer);
+        var request = new UpdateDashboardSettingsRequest(
+            "media-pc",
+            false,
+            [new UpdateServiceSetting("plex", "Plex Media", ServiceKind.Plex, "Streaming", "http://media-pc:32400", "http://media-pc:32400/identity", "", false, true)],
+            [new NewsFeedSetting("Test feed", "https://example.com/feed.xml", NewsContentKind.Article, "Testing", "https://example.com")]);
+
+        var result = await setup.UpdateSettingsAsync(request, CancellationToken.None);
+
+        Assert.True(result.RequiresRestart);
+        Assert.True(Assert.Single(result.Services).HasApiKey);
+        Assert.NotNull(writer.Json);
+        Assert.Contains("dashboard-secret", writer.Json);
+        Assert.Contains("agent-secret", writer.Json);
+        Assert.Contains("password-hash", writer.Json);
+        Assert.Contains("plex-secret", writer.Json);
+        Assert.Contains("media-pc", writer.Json);
+    }
+
+    [Fact]
+    public async Task Updating_settings_rejects_duplicate_service_ids()
+    {
+        var setup = CreateSetup(out _);
+        var request = new UpdateDashboardSettingsRequest(
+            "server-pc",
+            true,
+            [
+                new UpdateServiceSetting("plex", "Plex", ServiceKind.Plex, "", null, null, null, false, false),
+                new UpdateServiceSetting("PLEX", "Plex duplicate", ServiceKind.Plex, "", null, null, null, false, false)
+            ],
+            []);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => setup.UpdateSettingsAsync(request, CancellationToken.None));
+
+        Assert.Contains("unique", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static SetupService CreateSetup(out InMemorySettingsWriter writer)
+    {
+        writer = new InMemorySettingsWriter();
+        return new SetupService(
+            Options.Create(new DashboardOptions
+            {
+                DefaultAgentId = "server-pc",
+                DataPath = "dashboard-state.test.json",
+                IncludeRecommendedFeeds = true,
+                Services = [new ServiceDefinition
+                {
+                    Id = "plex",
+                    Name = "Plex",
+                    Kind = ServiceKind.Plex,
+                    Description = "Media server",
+                    Url = new Uri("http://server-pc:32400"),
+                    HealthUrl = new Uri("http://server-pc:32400/identity"),
+                    ApiKey = "plex-secret"
+                }],
+                NewsFeeds = []
+            }),
+            Options.Create(new DashboardSecurityOptions
+            {
+                DashboardApiKey = "dashboard-secret",
+                AgentApiKey = "agent-secret",
+                DashboardPassword = "",
+                DashboardPasswordHash = "password-hash"
+            }),
+            new InMemoryAgentCommandStore(),
+            writer);
+    }
+
+    private sealed class InMemorySettingsWriter : ILocalSettingsWriter
+    {
+        public string? Json { get; private set; }
+
+        public Task WriteAsync(string json, CancellationToken cancellationToken)
+        {
+            Json = json;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class InMemoryAgentCommandStore : IAgentCommandStore
