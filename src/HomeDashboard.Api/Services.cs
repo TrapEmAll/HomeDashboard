@@ -417,6 +417,8 @@ public sealed class ConfiguredServiceStatusProvider(
         ServiceDefinition service,
         CancellationToken cancellationToken)
     {
+        service = NormalizeServiceUris(service);
+
         if (service.Url is not null)
         {
             var integrationCard = await TryCheckIntegrationAsync(client, service, cancellationToken);
@@ -847,6 +849,52 @@ public sealed class ConfiguredServiceStatusProvider(
 
     private static ServiceStatus ToStatus(HttpStatusCode statusCode)
         => (int)statusCode >= 500 ? ServiceStatus.Degraded : ServiceStatus.Offline;
+
+    private static ServiceDefinition NormalizeServiceUris(ServiceDefinition service)
+    {
+        var url = NormalizeConfiguredUri(service.Url);
+        var healthUrl = NormalizeConfiguredUri(service.HealthUrl);
+
+        if (url == service.Url && healthUrl == service.HealthUrl)
+        {
+            return service;
+        }
+
+        return new ServiceDefinition
+        {
+            Id = service.Id,
+            Name = service.Name,
+            Kind = service.Kind,
+            Description = service.Description,
+            Url = url,
+            HealthUrl = healthUrl,
+            ApiKey = service.ApiKey,
+            RestartEnabled = service.RestartEnabled
+        };
+    }
+
+    private static Uri? NormalizeConfiguredUri(Uri? uri)
+    {
+        if (uri is null)
+        {
+            return null;
+        }
+
+        if (uri.IsAbsoluteUri)
+        {
+            return uri;
+        }
+
+        var value = uri.ToString().Trim();
+        var markdownStart = value.IndexOf("](", StringComparison.Ordinal);
+        if (value.StartsWith("[", StringComparison.Ordinal) && markdownStart > 0 && value.EndsWith(")", StringComparison.Ordinal))
+        {
+            value = value[(markdownStart + 2)..^1].Trim();
+        }
+
+        value = value.Trim('<', '>');
+        return Uri.TryCreate(value, UriKind.Absolute, out var normalized) ? normalized : null;
+    }
 }
 
 public sealed class LocalSystemStatsProvider : ISystemStatsProvider
