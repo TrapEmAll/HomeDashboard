@@ -74,6 +74,31 @@ public sealed class ConfiguredServiceStatusProviderTests
         Assert.Equal(new Uri("http://server-pc:7878"), service.Url);
     }
 
+    [Fact]
+    public async Task GetServicesAsync_checks_localhost_services_through_ipv4_loopback()
+    {
+        Uri? checkedUri = null;
+        var provider = CreateProvider(
+            new ServiceDefinition
+            {
+                Id = "radarr",
+                Name = "Radarr",
+                Kind = ServiceKind.Radarr,
+                HealthUrl = new Uri("http://localhost:7878/ping")
+            },
+            request =>
+            {
+                checkedUri = request.RequestUri;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            });
+
+        var services = await provider.GetServicesAsync(CancellationToken.None);
+
+        var service = Assert.Single(services);
+        Assert.Equal(ServiceStatus.Online, service.Status);
+        Assert.Equal("127.0.0.1", checkedUri?.Host);
+    }
+
     private static ConfiguredServiceStatusProvider CreateProvider(
         ServiceDefinition service,
         Func<HttpRequestMessage, HttpResponseMessage> handler)
