@@ -14,19 +14,20 @@ const statusClass: Record<ServiceStatus, string> = {
 };
 
 export function ServiceGrid({ services, onRestart }: Props) {
+  const items = Array.isArray(services) ? services : [];
   return (
     <section className="panel">
       <div className="section-heading">
         <h2>Services</h2>
-        <span>{services.length} configured</span>
+        <span>{items.length} configured</span>
       </div>
       <div className="service-grid">
-        {services.map((service) => (
+        {items.map((service) => (
           <article className="service-card" key={service.id}>
             <div>
               <div className="service-title">
                 <h3>{service.name}</h3>
-                <span className={statusClass[service.status]}>{service.status}</span>
+                <span className={statusClass[service.status] ?? statusClass.Unknown}>{service.status}</span>
               </div>
               <p>{service.description}</p>
             </div>
@@ -36,7 +37,7 @@ export function ServiceGrid({ services, onRestart }: Props) {
                 <Server size={13} />
                 {service.kind}
               </span>
-              {service.metrics.map((metric) => (
+              {(Array.isArray(service.metrics) ? service.metrics : []).map((metric) => (
                 <span className="metric-chip" key={`${service.id}-${metric.label}`}>
                   {metric.label}: {metric.value}
                 </span>

@@ -84,6 +84,13 @@ The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
 - `agent/HomeDashboard.Agent.exe`, which reports Windows service/system state and runs queued restart commands.
 - `tools/install-api-service.ps1` and `tools/install-agent-service.ps1` for optional Windows service installation.
 - `tools/install-homedashboard.ps1`, a combined installer wrapper for the packaged API and agent services.
+- `tools/update-homedashboard.ps1`, an updater that downloads a GitHub branch, preserves local config/data, rebuilds, reinstalls, and restarts the services.
+
+Update an existing source-based install from GitHub with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\update-homedashboard.ps1
+```
 
 ## Configuration
 

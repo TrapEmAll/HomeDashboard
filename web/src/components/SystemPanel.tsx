@@ -2,23 +2,32 @@ import { Cpu, HardDrive, MemoryStick } from "lucide-react";
 import type { SystemStats } from "../types/dashboard";
 
 interface Props {
-  system: SystemStats;
+  system?: SystemStats | null;
 }
 
 export function SystemPanel({ system }: Props) {
+  const stats = system ?? {
+    hostname: "Local host",
+    cpuPercent: 0,
+    memoryUsedPercent: 0,
+    disks: [],
+    capturedAt: new Date().toISOString()
+  };
+  const disks = Array.isArray(stats.disks) ? stats.disks : [];
+
   return (
     <section className="panel">
       <div className="section-heading">
-        <h2>{system.hostname}</h2>
-        <span>{new Date(system.capturedAt).toLocaleTimeString()}</span>
+        <h2>{stats.hostname}</h2>
+        <span>{new Date(stats.capturedAt).toLocaleTimeString()}</span>
       </div>
       <div className="stat-grid">
-        <Metric icon={<Cpu size={19} />} label="CPU" value={`${system.cpuPercent.toFixed(1)}%`} />
-        <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${system.memoryUsedPercent.toFixed(1)}%`} />
-        <Metric icon={<HardDrive size={19} />} label="Disks" value={`${system.disks.length}`} />
+        <Metric icon={<Cpu size={19} />} label="CPU" value={`${formatPercent(stats.cpuPercent)}%`} />
+        <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${formatPercent(stats.memoryUsedPercent)}%`} />
+        <Metric icon={<HardDrive size={19} />} label="Disks" value={`${disks.length}`} />
       </div>
       <div className="disk-list">
-        {system.disks.map((disk) => {
+        {disks.map((disk) => {
           const usedPercent = disk.totalBytes > 0 ? ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100 : 0;
           return (
             <div className="disk-row" key={disk.name}>
@@ -43,4 +52,8 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
       <strong>{value}</strong>
     </div>
   );
+}
+
+function formatPercent(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(1) : "0.0";
 }

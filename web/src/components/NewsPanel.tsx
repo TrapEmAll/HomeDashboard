@@ -6,20 +6,21 @@ interface Props {
 }
 
 export function NewsPanel({ items }: Props) {
+  const newsItems = Array.isArray(items) ? items : [];
   return (
     <section className="panel">
       <div className="section-heading">
         <h2>News</h2>
-        <span>{items.length} latest</span>
+        <span>{newsItems.length} latest</span>
       </div>
       <div className="news-list">
-        {items.length === 0 ? (
+        {newsItems.length === 0 ? (
           <div className="empty-state">
             <Newspaper size={20} />
             <span>No feed items available.</span>
           </div>
         ) : (
-          items.map((item) => (
+          newsItems.map((item) => (
             <a className="news-item" href={item.url ?? "#"} key={`${item.source}-${item.title}`} target="_blank" rel="noreferrer">
               <span>{item.source}</span>
               <strong>{item.title}</strong>

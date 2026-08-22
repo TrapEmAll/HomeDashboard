@@ -11,6 +11,7 @@ import "./styles.css";
 export function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [liveError, setLiveError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
@@ -70,10 +71,19 @@ export function App() {
 
     const events = new EventSource(dashboardEventsUrl(), { withCredentials: true });
     events.onmessage = (event) => {
-      setSnapshot(parseDashboardSnapshot(event.data));
-      setLoading(false);
+      try {
+        setSnapshot(parseDashboardSnapshot(event.data));
+        setLiveError(null);
+        setLoading(false);
+      } catch {
+        setLiveError("Live updates paused after a malformed update. Polling is still active.");
+        events.close();
+      }
     };
-    events.onerror = () => events.close();
+    events.onerror = () => {
+      setLiveError("Live updates disconnected. Polling is still active.");
+      events.close();
+    };
 
     const handle = window.setInterval(() => void load(), 30_000);
     return () => {
@@ -105,7 +115,7 @@ export function App() {
   }
 
   async function restart(serviceId: string) {
-    const service = snapshot?.services.find((candidate) => candidate.id === serviceId);
+    const service = (snapshot?.services ?? []).find((candidate) => candidate.id === serviceId);
     if (!window.confirm(`Restart ${service?.name ?? serviceId}? This can interrupt active users and downloads.`)) {
       return;
     }
@@ -229,6 +239,7 @@ export function App() {
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
+      {liveError ? <div className="warning-banner">{liveError}</div> : null}
 
       {snapshot ? (
         <div className="dashboard-layout">
@@ -274,14 +285,15 @@ export function App() {
 }
 
 function NotificationPanel({ notifications }: { notifications: DashboardNotification[] }) {
+  const items = Array.isArray(notifications) ? notifications : [];
   return (
     <section className="panel">
       <div className="section-heading">
         <h2>Alerts</h2>
-        <span>{notifications.length}</span>
+        <span>{items.length}</span>
       </div>
       <div className="notice-list">
-        {notifications.length > 0 ? notifications.map((notification) => (
+        {items.length > 0 ? items.map((notification) => (
           <div className={`notice ${notification.severity.toLowerCase()}`} key={notification.id}>
             <Bell size={16} />
             <div>
@@ -296,14 +308,15 @@ function NotificationPanel({ notifications }: { notifications: DashboardNotifica
 }
 
 function AuditPanel({ events }: { events: AuditEvent[] }) {
+  const items = Array.isArray(events) ? events : [];
   return (
     <section className="panel">
       <div className="section-heading">
         <h2>Audit</h2>
-        <span>{events.length} recent</span>
+        <span>{items.length} recent</span>
       </div>
       <div className="audit-list">
-        {events.length > 0 ? events.map((event) => (
+        {items.length > 0 ? items.map((event) => (
           <div className="audit-row" key={event.id}>
             <History size={15} />
             <div>

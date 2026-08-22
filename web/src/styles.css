@@ -444,14 +444,16 @@ button {
 
 .empty-state,
 .loading-panel,
-.error-banner {
+.error-banner,
+.warning-banner {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
 .loading-panel,
-.error-banner {
+.error-banner,
+.warning-banner {
   border: 1px solid #dde3e8;
   border-radius: 8px;
   background: #ffffff;
@@ -475,6 +477,13 @@ button {
   background: #edf9f1;
   padding: 12px;
   margin: 0;
+}
+
+.warning-banner {
+  border-color: #f5d98b;
+  color: #745100;
+  background: #fff9e8;
+  margin-bottom: 18px;
 }
 
 .error-banner.compact {
