@@ -52,6 +52,7 @@ dotnet publish $agentProject --configuration $Configuration --runtime $Runtime -
 Copy-Item (Join-Path $PSScriptRoot "install-api-service.ps1") $toolsOutput
 Copy-Item (Join-Path $PSScriptRoot "install-agent-service.ps1") $toolsOutput
 Copy-Item (Join-Path $PSScriptRoot "install-homedashboard.ps1") $toolsOutput
+Copy-Item (Join-Path $PSScriptRoot "update-homedashboard.ps1") $toolsOutput
 Copy-Item (Join-Path $repoRoot "README.md") $outputRoot
 
 Compress-Archive -Path (Join-Path $outputRoot "*") -DestinationPath $zipPath -Force

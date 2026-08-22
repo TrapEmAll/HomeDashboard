@@ -1,4 +1,4 @@
-import { ExternalLink, RotateCcw, Server } from "lucide-react";
+import { Clapperboard, Download, ExternalLink, Film, Folder, Gamepad2, HardDrive, Radio, RotateCcw, Server, Tv, Workflow } from "lucide-react";
 import type { ServiceCard, ServiceStatus } from "../types/dashboard";
 
 interface Props {
@@ -13,22 +13,56 @@ const statusClass: Record<ServiceStatus, string> = {
   Unknown: "status unknown"
 };
 
+const serviceIcons = {
+  Plex: Film,
+  Jellyfin: Clapperboard,
+  Sonarr: Tv,
+  Radarr: Film,
+  Lidarr: Radio,
+  Readarr: Folder,
+  Prowlarr: Workflow,
+  Bazarr: Workflow,
+  qBittorrent: Download,
+  SABnzbd: Download,
+  GameServer: Gamepad2,
+  FileShare: HardDrive,
+  Generic: Server
+};
+
 export function ServiceGrid({ services, onRestart }: Props) {
+  const items = Array.isArray(services) ? services : [];
   return (
-    <section className="panel">
+    <section className="panel services-panel">
       <div className="section-heading">
-        <h2>Services</h2>
-        <span>{services.length} configured</span>
+        <div>
+          <span className="section-kicker">Configured apps</span>
+          <h2>Services</h2>
+        </div>
+        <span>{items.length} configured</span>
       </div>
       <div className="service-grid">
-        {services.map((service) => (
-          <article className="service-card" key={service.id}>
+        {items.map((service) => {
+          const Icon = serviceIcons[service.kind] ?? Server;
+          const metrics = Array.isArray(service.metrics) ? service.metrics : [];
+
+          return (
+          <article className={`service-card ${service.status.toLowerCase()}`} key={service.id}>
             <div>
               <div className="service-title">
-                <h3>{service.name}</h3>
-                <span className={statusClass[service.status]}>{service.status}</span>
+                <div className="service-heading">
+                  <span className="service-icon">
+                    <Icon size={20} />
+                  </span>
+                  <div>
+                    <h3>{service.name}</h3>
+                    <p>{service.description || service.kind}</p>
+                  </div>
+                </div>
+                <span className={statusClass[service.status] ?? statusClass.Unknown}>
+                  <span />
+                  {service.status}
+                </span>
               </div>
-              <p>{service.description}</p>
             </div>
             <div className="service-meta">{service.statusMessage ?? "Waiting for check."}</div>
             <div className="metric-strip">
@@ -36,11 +70,13 @@ export function ServiceGrid({ services, onRestart }: Props) {
                 <Server size={13} />
                 {service.kind}
               </span>
-              {service.metrics.map((metric) => (
+              {metrics.map((metric) => (
                 <span className="metric-chip" key={`${service.id}-${metric.label}`}>
-                  {metric.label}: {metric.value}
+                  <b>{metric.label}</b>
+                  {metric.value}
                 </span>
               ))}
+              {metrics.length === 0 ? <span className="metric-chip muted">No metrics yet</span> : null}
             </div>
             <div className="service-actions">
               {service.url ? (
@@ -63,7 +99,8 @@ export function ServiceGrid({ services, onRestart }: Props) {
               </button>
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
