@@ -103,6 +103,10 @@ Example download clients:
 
 Browser users sign in through `/auth/login` with `Security:DashboardPassword` or `Security:DashboardPasswordHash`. The first-run setup UI writes `appsettings.Local.json` with a password hash and generated API keys when you leave key fields blank. Restart the API after saving setup so all new values are loaded.
 
+After first-run setup, authenticated users can open the gear menu to manage the default agent, service cards, integration keys, restart-control flags, and custom RSS or podcast feeds. The editor never returns stored API keys to the browser. A blank key preserves the saved value; **Clear saved key** explicitly removes it. Changes are written atomically to `appsettings.Local.json`, preserve dashboard and agent credentials plus session settings, and take effect after the API service restarts.
+
+Use machine names or LAN addresses that are reachable from the PC running the API. `localhost` always means the API PC, not the computer viewing the dashboard in a browser.
+
 Dashboard automation can still call dashboard endpoints with `X-HomeDashboard-Key: Security:DashboardApiKey`. Agent write/poll endpoints use `Security:AgentApiKey`.
 
 API settings:
