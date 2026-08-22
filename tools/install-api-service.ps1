@@ -15,10 +15,11 @@ $contentRoot = Split-Path $exePath
 $binaryPath = "`"$exePath`" --urls http://0.0.0.0:$Port"
 
 if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-    throw "Service '$ServiceName' already exists. Stop and delete it first if you want to reinstall."
+    Write-Host "Service '$ServiceName' already exists. Skipping create."
+    return
 }
 
-sc.exe create $ServiceName binPath= $binaryPath start= auto DisplayName= $DisplayName
+New-Service -Name $ServiceName -BinaryPathName $binaryPath -DisplayName $DisplayName -StartupType Automatic
 sc.exe description $ServiceName "Runs the HomeDashboard web UI and API."
 New-Item -ItemType Directory -Path (Join-Path $contentRoot "data") -Force | Out-Null
 Write-Host "Created $ServiceName. Start it with: Start-Service $ServiceName"
