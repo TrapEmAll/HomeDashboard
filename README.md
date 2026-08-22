@@ -109,6 +109,16 @@ The settings editor supports Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Ba
 
 Keyboard controls are available while you are not typing in a field: `/` focuses service search, `R` refreshes, `S` opens settings, and `Escape` closes settings.
 
+## Build troubleshooting
+
+The repository includes an isolated API build script, so restore and build do not depend on the current Windows user's roaming NuGet settings. To verify the API by itself, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\build-api.ps1
+```
+
+If this reports that no compatible SDK is installed, install the .NET 8 SDK or a newer SDK and rerun the command. The complete Windows package additionally requires Node.js for the React production build.
+
 Restart controls require browser confirmation, queue commands for `Dashboard:DefaultAgentId`, and write audit events for queued, rejected, and completed commands. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
 
 ## MVP boundaries
