@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Activity, Bell, CheckCircle2, Clock3, Columns3, Gauge, History, LayoutGrid, LogOut, PanelRightClose, PanelRightOpen, RefreshCw, Search, Server, ShieldCheck, Signal, TriangleAlert, Wand2, X } from "lucide-react";
-import { ApiError, dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup } from "./lib/api";
+import { Activity, Bell, CheckCircle2, Clock3, Columns3, Gauge, History, LayoutGrid, LogOut, PanelRightClose, PanelRightOpen, RefreshCw, Search, Server, Settings, ShieldCheck, Signal, TriangleAlert, Wand2, X } from "lucide-react";
+import { ApiError, dashboardEventsUrl, getAgentHistory, getDashboard, getDashboardSettings, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup, updateDashboardSettings } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
 import { ServiceGrid } from "./components/ServiceGrid";
+import { SettingsDrawer } from "./components/SettingsDrawer";
 import { SystemPanel } from "./components/SystemPanel";
-import type { AuditEvent, DashboardNotification, DashboardSnapshot, ServiceKind, ServiceStatus, SetupRequest, SetupStatus } from "./types/dashboard";
+import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, ServiceKind, ServiceStatus, SetupRequest, SetupStatus, UpdateDashboardSettingsRequest } from "./types/dashboard";
 import "./styles.css";
 
 export function App() {
@@ -19,12 +20,18 @@ export function App() {
   const [signingIn, setSigningIn] = useState(false);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [setupSaving, setSetupSaving] = useState(false);
+  const [settings, setSettings] = useState<DashboardSettings | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [agentHistory, setAgentHistory] = useState<AgentHistoryPoint[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | ServiceStatus>("All");
   const [density, setDensity] = useState<"compact" | "comfortable">(() => localStorage.getItem("homedashboard-density") === "comfortable" ? "comfortable" : "compact");
   const [showSidebar, setShowSidebar] = useState(() => localStorage.getItem("homedashboard-sidebar") !== "hidden");
   const [favorites, setFavorites] = useState<string[]>(() => readStoredArray("homedashboard-favorites"));
   const [healthHistory, setHealthHistory] = useState<number[]>(() => readStoredNumbers("homedashboard-health-history"));
+  const searchRef = useRef<HTMLInputElement>(null);
   const [setupForm, setSetupForm] = useState<SetupRequest>({
     dashboardPassword: "",
     dashboardApiKey: "",
@@ -105,6 +112,45 @@ export function App() {
     };
   }, [authenticated]);
 
+  const primaryAgentId = snapshot?.agents[0]?.agentId ?? setupStatus?.defaultAgentId;
+  useEffect(() => {
+    if (!authenticated || !primaryAgentId) {
+      setAgentHistory([]);
+      return;
+    }
+
+    void getAgentHistory(primaryAgentId)
+      .then(setAgentHistory)
+      .catch(() => setAgentHistory([]));
+  }, [authenticated, primaryAgentId, snapshot?.generatedAt]);
+
+  useEffect(() => {
+    function handleKeyboard(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const isEditing = target?.tagName === "INPUT" || target?.tagName === "SELECT" || target?.tagName === "TEXTAREA";
+      if (event.key === "Escape" && settings) {
+        setSettings(null);
+        return;
+      }
+      if (isEditing || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      if (event.key === "/") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      } else if (event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        void load();
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void openSettings();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [settings]);
+
   useEffect(() => {
     if (!snapshot || snapshot.services.length === 0) {
       return;
@@ -179,6 +225,35 @@ export function App() {
       setError(ex instanceof Error ? ex.message : "Setup failed.");
     } finally {
       setSetupSaving(false);
+    }
+  }
+
+  async function openSettings() {
+    if (settingsLoading) {
+      return;
+    }
+    setSettingsLoading(true);
+    setSettingsError(null);
+    try {
+      setSettings(await getDashboardSettings());
+    } catch (ex) {
+      setError(ex instanceof Error ? ex.message : "Settings could not be loaded.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  async function saveSettings(request: UpdateDashboardSettingsRequest) {
+    setSettingsSaving(true);
+    setSettingsError(null);
+    try {
+      const saved = await updateDashboardSettings(request);
+      setSettings(saved);
+      setActionMessage("Settings saved. Restart the API when convenient to apply them.");
+    } catch (ex) {
+      setSettingsError(ex instanceof Error ? ex.message : "Settings could not be saved.");
+    } finally {
+      setSettingsSaving(false);
     }
   }
 
@@ -317,6 +392,9 @@ export function App() {
           <button className="icon-button" type="button" onClick={toggleSidebar} title={showSidebar ? "Hide details" : "Show details"}>
             {showSidebar ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
           </button>
+          <button className="icon-button" type="button" onClick={() => void openSettings()} disabled={settingsLoading} title="Dashboard settings (S)">
+            <Settings size={18} />
+          </button>
           <button className="refresh-button" type="button" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={18} />
             <span>Refresh</span>
@@ -391,7 +469,7 @@ export function App() {
           <section className="command-bar" aria-label="Service controls">
             <label className="service-search">
               <Search size={17} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services, types, or status" />
+              <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services, types, or status" />
               {query ? <button type="button" onClick={() => setQuery("")} title="Clear search"><X size={16} /></button> : null}
             </label>
             <div className="filter-control" role="group" aria-label="Filter by status">
@@ -434,7 +512,7 @@ export function App() {
                   )}
                 </div>
               </section>
-              <SystemPanel system={snapshot.system} />
+              <SystemPanel system={snapshot.system} history={agentHistory} />
               <AuditPanel events={snapshot.recentAuditEvents} />
             </aside> : null}
           </div>
@@ -446,6 +524,7 @@ export function App() {
           <span>{loading ? "Loading dashboard..." : "Dashboard unavailable."}</span>
         </div>
       )}
+      {settings ? <SettingsDrawer settings={settings} saving={settingsSaving} error={settingsError} onClose={() => setSettings(null)} onSave={saveSettings} /> : null}
     </main>
   );
 }

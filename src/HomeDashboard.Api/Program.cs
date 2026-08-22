@@ -37,6 +37,7 @@ builder.Services.AddSingleton<ISystemStatsProvider, LocalSystemStatsProvider>();
 builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
 builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
 builder.Services.AddSingleton<ISetupService, SetupService>();
+builder.Services.AddSingleton<ILocalSettingsWriter, LocalSettingsWriter>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
@@ -109,6 +110,18 @@ app.MapGet("/auth/session", (IBrowserSessionStore sessions, IOptions<DashboardSe
     => Results.Ok(sessions.Get(context.Request.Cookies[options.Value.SessionCookieName])));
 app.MapGet("/api/dashboard", async (IDashboardService dashboard, CancellationToken cancellationToken)
     => Results.Ok(await dashboard.GetSnapshotAsync(cancellationToken)));
+app.MapGet("/api/settings", (ISetupService setup) => Results.Ok(setup.GetSettings()));
+app.MapPut("/api/settings", async (UpdateDashboardSettingsRequest request, ISetupService setup, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await setup.UpdateSettingsAsync(request, cancellationToken));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
 app.MapGet("/api/services", async (IServiceStatusProvider services, CancellationToken cancellationToken)
     => Results.Ok(await services.GetServicesAsync(cancellationToken)));
 app.MapGet("/api/system", (ISystemStatsProvider stats) => Results.Ok(stats.GetStats()));

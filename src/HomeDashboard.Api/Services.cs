@@ -56,7 +56,9 @@ public interface IAgentCommandStore
 public interface ISetupService
 {
     SetupStatus GetStatus();
+    DashboardSettings GetSettings();
     Task<SetupStatus> SaveAsync(SetupRequest request, CancellationToken cancellationToken);
+    Task<DashboardSettings> UpdateSettingsAsync(UpdateDashboardSettingsRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class DashboardService(

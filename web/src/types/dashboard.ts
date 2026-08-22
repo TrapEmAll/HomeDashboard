@@ -33,6 +33,16 @@ export interface AgentSummary {
   servicesMonitored: number;
 }
 
+export interface AgentHistoryPoint {
+  agentId: string;
+  capturedAt: string;
+  cpuPercent: number;
+  memoryUsedPercent: number;
+  servicesOnline: number;
+  servicesDegraded: number;
+  servicesOffline: number;
+}
+
 export interface ServiceCard {
   id: string;
   name: string;
@@ -132,4 +142,50 @@ export interface ServiceSetupRequest {
 export interface NewsFeedSetupRequest {
   name: string;
   url: string;
+}
+
+export interface DashboardSettings {
+  defaultAgentId: string;
+  includeRecommendedFeeds: boolean;
+  services: ServiceSetting[];
+  newsFeeds: NewsFeedSetting[];
+  requiresRestart: boolean;
+}
+
+export interface ServiceSetting {
+  id: string;
+  name: string;
+  kind: ServiceKind;
+  description: string;
+  url?: string | null;
+  healthUrl?: string | null;
+  hasApiKey: boolean;
+  restartEnabled: boolean;
+}
+
+export interface NewsFeedSetting {
+  name: string;
+  url: string;
+  kind: NewsContentKind;
+  category: string;
+  providerUrl?: string | null;
+}
+
+export interface UpdateDashboardSettingsRequest {
+  defaultAgentId: string;
+  includeRecommendedFeeds: boolean;
+  services: UpdateServiceSetting[];
+  newsFeeds: NewsFeedSetting[];
+}
+
+export interface UpdateServiceSetting {
+  id: string;
+  name: string;
+  kind: ServiceKind;
+  description: string;
+  url?: string | null;
+  healthUrl?: string | null;
+  apiKey?: string | null;
+  clearApiKey: boolean;
+  restartEnabled: boolean;
 }
