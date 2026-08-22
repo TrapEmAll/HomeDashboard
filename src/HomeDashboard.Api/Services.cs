@@ -72,14 +72,18 @@ public sealed class DashboardService(
         var servicesTask = serviceStatusProvider.GetServicesAsync(cancellationToken);
         var newsTask = newsProvider.GetNewsAsync(cancellationToken);
         var latestAgent = agentSnapshotStore.GetLatest(options.Value.DefaultAgentId);
+        var configuredServices = await servicesTask;
+        var services = MergeServices(configuredServices, latestAgent?.Services);
+        var system = latestAgent?.System ?? systemStatsProvider.GetStats();
+        var agents = agentSnapshotStore.GetAll();
 
         return new DashboardSnapshot(
             DateTimeOffset.UtcNow,
-            MergeServices(await servicesTask, latestAgent?.Services),
-            latestAgent?.System ?? systemStatsProvider.GetStats(),
+            services,
+            system,
             await newsTask,
-            agentSnapshotStore.GetAll(),
-            BuildNotifications(latestAgent?.System ?? systemStatsProvider.GetStats(), await servicesTask, agentSnapshotStore.GetAll()),
+            agents,
+            BuildNotifications(system, services, agents),
             commandStore.GetRecentAuditEvents(8));
     }
 
@@ -1034,29 +1038,59 @@ public sealed class RssNewsProvider(
     IHttpClientFactory httpClientFactory,
     ILogger<RssNewsProvider> logger) : INewsProvider
 {
+    private readonly SemaphoreSlim refreshLock = new(1, 1);
+    private IReadOnlyList<NewsItem> cachedItems = [];
+    private DateTimeOffset cacheExpiresAt = DateTimeOffset.MinValue;
+
     public async Task<IReadOnlyList<NewsItem>> GetNewsAsync(CancellationToken cancellationToken)
     {
-        var client = httpClientFactory.CreateClient("news");
-        var items = new List<NewsItem>();
-
-        foreach (var feed in options.Value.NewsFeeds)
+        if (DateTimeOffset.UtcNow < cacheExpiresAt)
         {
-            try
-            {
-                await using var stream = await client.GetStreamAsync(feed.Url, cancellationToken);
-                var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
-                items.AddRange(ParseFeed(feed.Name, document));
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Xml.XmlException)
-            {
-                logger.LogWarning(ex, "Failed to read news feed {FeedName}", feed.Name);
-            }
+            return cachedItems;
         }
 
-        return items
-            .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
-            .Take(12)
-            .ToArray();
+        await refreshLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (DateTimeOffset.UtcNow < cacheExpiresAt)
+            {
+                return cachedItems;
+            }
+
+            var client = httpClientFactory.CreateClient("news");
+            var items = new List<NewsItem>();
+
+            foreach (var feed in options.Value.NewsFeeds)
+            {
+                try
+                {
+                    await using var stream = await client.GetStreamAsync(feed.Url, cancellationToken);
+                    var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
+                    items.AddRange(ParseFeed(feed.Name, document));
+                }
+                catch (Exception ex) when (
+                    ex is HttpRequestException or System.Xml.XmlException
+                    || ex is TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    logger.LogWarning(ex, "Failed to read news feed {FeedName}", feed.Name);
+                }
+            }
+
+            if (items.Count > 0 || cachedItems.Count == 0)
+            {
+                cachedItems = items
+                    .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
+                    .Take(12)
+                    .ToArray();
+            }
+
+            cacheExpiresAt = DateTimeOffset.UtcNow.AddMinutes(items.Count > 0 ? 10 : 1);
+            return cachedItems;
+        }
+        finally
+        {
+            refreshLock.Release();
+        }
     }
 
     internal static IReadOnlyList<NewsItem> ParseFeed(string source, XDocument document)

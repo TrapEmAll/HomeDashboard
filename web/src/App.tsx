@@ -1,23 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Activity, Bell, CheckCircle2, Clock3, History, LogOut, RefreshCw, Server, ShieldCheck, Signal, TriangleAlert, Wand2 } from "lucide-react";
-import { dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup } from "./lib/api";
+import { Activity, Bell, CheckCircle2, Clock3, Columns3, Gauge, History, LayoutGrid, LogOut, PanelRightClose, PanelRightOpen, RefreshCw, Search, Server, ShieldCheck, Signal, TriangleAlert, Wand2, X } from "lucide-react";
+import { ApiError, dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SystemPanel } from "./components/SystemPanel";
-import type { AuditEvent, DashboardNotification, DashboardSnapshot, ServiceKind, SetupRequest, SetupStatus } from "./types/dashboard";
+import type { AuditEvent, DashboardNotification, DashboardSnapshot, ServiceKind, ServiceStatus, SetupRequest, SetupStatus } from "./types/dashboard";
 import "./styles.css";
 
 export function App() {
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
   const [signingIn, setSigningIn] = useState(false);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [setupSaving, setSetupSaving] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"All" | ServiceStatus>("All");
+  const [density, setDensity] = useState<"compact" | "comfortable">(() => localStorage.getItem("homedashboard-density") === "comfortable" ? "comfortable" : "compact");
+  const [showSidebar, setShowSidebar] = useState(() => localStorage.getItem("homedashboard-sidebar") !== "hidden");
+  const [favorites, setFavorites] = useState<string[]>(() => readStoredArray("homedashboard-favorites"));
+  const [healthHistory, setHealthHistory] = useState<number[]>(() => readStoredNumbers("homedashboard-health-history"));
   const [setupForm, setSetupForm] = useState<SetupRequest>({
     dashboardPassword: "",
     dashboardApiKey: "",
@@ -41,6 +48,12 @@ export function App() {
       setSnapshot(await getDashboard());
       setAuthenticated(true);
     } catch (ex) {
+      if (ex instanceof ApiError && ex.status === 401) {
+        setAuthenticated(false);
+        setSnapshot(null);
+        setError("Your session expired. Sign in again.");
+        return;
+      }
       setError(ex instanceof Error ? ex.message : "Dashboard request failed.");
     } finally {
       setLoading(false);
@@ -92,6 +105,30 @@ export function App() {
     };
   }, [authenticated]);
 
+  useEffect(() => {
+    if (!snapshot || snapshot.services.length === 0) {
+      return;
+    }
+
+    const score = Math.round(snapshot.services.reduce((total, service) => total + (service.status === "Online" ? 100 : service.status === "Degraded" ? 50 : 0), 0) / snapshot.services.length);
+    setHealthHistory((current) => {
+      const next = [...current, score].slice(-24);
+      localStorage.setItem("homedashboard-health-history", JSON.stringify(next));
+      return next;
+    });
+  }, [snapshot?.generatedAt]);
+
+  const services = snapshot?.services ?? [];
+  const filteredServices = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return services.filter((service) => {
+      const matchesStatus = statusFilter === "All" || service.status === statusFilter;
+      const matchesQuery = needle.length === 0 || [service.name, service.kind, service.description, service.statusMessage]
+        .some((value) => value?.toLocaleLowerCase().includes(needle));
+      return matchesStatus && matchesQuery;
+    });
+  }, [query, services, statusFilter]);
+
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSigningIn(true);
@@ -120,8 +157,16 @@ export function App() {
       return;
     }
 
-    await requestRestart(serviceId);
-    await load();
+    setError(null);
+    setActionMessage(null);
+    try {
+      await requestRestart(serviceId);
+      setActionMessage(`${service?.name ?? serviceId} restart queued.`);
+      window.setTimeout(() => setActionMessage(null), 5000);
+      await load();
+    } catch (ex) {
+      setError(ex instanceof Error ? ex.message : "Restart request failed.");
+    }
   }
 
   async function completeSetup(event: FormEvent<HTMLFormElement>) {
@@ -220,29 +265,60 @@ export function App() {
     );
   }
 
-  const services = snapshot?.services ?? [];
   const agents = snapshot?.agents ?? [];
   const alerts = snapshot?.notifications ?? [];
   const onlineCount = services.filter((service) => service.status === "Online").length;
   const issueCount = services.filter((service) => service.status === "Offline" || service.status === "Degraded").length;
   const lastUpdated = snapshot?.generatedAt ? new Date(snapshot.generatedAt).toLocaleTimeString() : "--";
+  function toggleFavorite(serviceId: string) {
+    setFavorites((current) => {
+      const next = current.includes(serviceId) ? current.filter((id) => id !== serviceId) : [...current, serviceId];
+      localStorage.setItem("homedashboard-favorites", JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function toggleDensity() {
+    const next = density === "compact" ? "comfortable" : "compact";
+    setDensity(next);
+    localStorage.setItem("homedashboard-density", next);
+  }
+
+  function toggleSidebar() {
+    const next = !showSidebar;
+    setShowSidebar(next);
+    localStorage.setItem("homedashboard-sidebar", next ? "visible" : "hidden");
+  }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-density={density}>
       <header className="topbar">
-        <div>
-          <span className="eyebrow">Home operations</span>
-          <h1>HomeDashboard</h1>
-          <p>Live service health, host telemetry, restart controls, and news.</p>
+        <div className="brand-lockup">
+          <div className="brand-mark"><Gauge size={22} /></div>
+          <div>
+            <span className="eyebrow">Home operations</span>
+            <h1>HomeDashboard</h1>
+          </div>
         </div>
+        <nav className="topbar-nav" aria-label="Dashboard sections">
+          <button type="button" onClick={() => document.getElementById("overview")?.scrollIntoView({ behavior: "smooth" })}>Overview</button>
+          <button type="button" onClick={() => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" })}>Services</button>
+          <button type="button" onClick={() => document.getElementById("activity")?.scrollIntoView({ behavior: "smooth" })}>Activity</button>
+        </nav>
         <div className="topbar-actions">
           <div className="live-pill" title="Dashboard update status">
             <Signal size={16} />
             <span>{liveError ? "Polling" : "Live"}</span>
           </div>
+          <button className="icon-button" type="button" onClick={toggleDensity} title={`Use ${density === "compact" ? "comfortable" : "compact"} density`}>
+            {density === "compact" ? <LayoutGrid size={18} /> : <Columns3 size={18} />}
+          </button>
+          <button className="icon-button" type="button" onClick={toggleSidebar} title={showSidebar ? "Hide details" : "Show details"}>
+            {showSidebar ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </button>
           <button className="refresh-button" type="button" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={18} />
-            Refresh
+            <span>Refresh</span>
           </button>
           <button className="icon-button" type="button" onClick={() => void signOut()} title="Sign out">
             <LogOut size={18} />
@@ -252,10 +328,11 @@ export function App() {
 
       {error ? <div className="error-banner">{error}</div> : null}
       {liveError ? <div className="warning-banner">{liveError}</div> : null}
+      {actionMessage ? <div className="success-banner action-banner"><CheckCircle2 size={17} />{actionMessage}</div> : null}
 
       {snapshot ? (
         <>
-          <section className="overview-strip" aria-label="Dashboard summary">
+          <section className="overview-strip" id="overview" aria-label="Dashboard summary">
             <div className="overview-card strong">
               <div className="overview-icon online">
                 <Server size={20} />
@@ -301,13 +378,36 @@ export function App() {
                 <strong>{lastUpdated}</strong>
               </div>
             </div>
+            <div className="overview-card health-card">
+              <div>
+                <span>Health pulse</span>
+                <strong>{healthHistory.at(-1) ?? 0}%</strong>
+              </div>
+              <HealthPulse values={healthHistory} />
+            </div>
           </section>
 
-          <div className="dashboard-layout">
-            <div className="main-column">
-              <ServiceGrid services={services} onRestart={(serviceId) => void restart(serviceId)} />
+          <section className="command-bar" aria-label="Service controls">
+            <label className="service-search">
+              <Search size={17} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services, types, or status" />
+              {query ? <button type="button" onClick={() => setQuery("")} title="Clear search"><X size={16} /></button> : null}
+            </label>
+            <div className="filter-control" role="group" aria-label="Filter by status">
+              {(["All", "Online", "Degraded", "Offline"] as const).map((status) => (
+                <button className={statusFilter === status ? "active" : ""} type="button" key={status} onClick={() => setStatusFilter(status)}>
+                  {status}<span>{status === "All" ? services.length : services.filter((service) => service.status === status).length}</span>
+                </button>
+              ))}
             </div>
-            <aside className="side-column">
+            <span className="result-count">{filteredServices.length} shown</span>
+          </section>
+
+          <div className={`dashboard-layout ${showSidebar ? "" : "sidebar-hidden"}`}>
+            <div className="main-column" id="services">
+              <ServiceGrid services={filteredServices} favorites={favorites} onToggleFavorite={toggleFavorite} onRestart={(serviceId) => void restart(serviceId)} />
+            </div>
+            {showSidebar ? <aside className="side-column" id="activity">
               <NotificationPanel notifications={alerts} />
               <section className="panel agents-panel">
                 <div className="section-heading">
@@ -336,7 +436,7 @@ export function App() {
               <SystemPanel system={snapshot.system} />
               <AuditPanel events={snapshot.recentAuditEvents} />
               <NewsPanel items={snapshot.news} />
-            </aside>
+            </aside> : null}
           </div>
         </>
       ) : (
@@ -400,4 +500,33 @@ function AuditPanel({ events }: { events: AuditEvent[] }) {
       </div>
     </section>
   );
+}
+
+function HealthPulse({ values }: { values: number[] }) {
+  const points = values.length > 0 ? values : [0];
+  return (
+    <div className="health-pulse" aria-label={`Recent health ${points[points.length - 1]} percent`}>
+      {points.map((value, index) => (
+        <span key={`${index}-${value}`} style={{ height: `${Math.max(12, value)}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function readStoredArray(key: string): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoredNumbers(key: string): number[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(value) ? value.filter((item): item is number => typeof item === "number" && Number.isFinite(item)).slice(-24) : [];
+  } catch {
+    return [];
+  }
 }

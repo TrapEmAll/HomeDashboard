@@ -1,4 +1,4 @@
-import { Cpu, HardDrive, MemoryStick } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Server } from "lucide-react";
 import type { SystemStats } from "../types/dashboard";
 
 interface Props {
@@ -35,12 +35,12 @@ export function SystemPanel({ system }: Props) {
         {disks.map((disk) => {
           const usedPercent = clampPercent(disk.totalBytes > 0 ? ((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100 : 0);
           return (
-            <div className="disk-row" key={disk.name}>
-              <span className="disk-name">{disk.name}</span>
+            <div className={`disk-row ${usedPercent >= 90 ? "critical" : usedPercent >= 80 ? "warning" : ""}`} key={disk.name}>
+              <span className="disk-name"><Server size={13} /> {disk.name}</span>
               <div className="meter">
                 <div style={{ width: `${Math.min(usedPercent, 100)}%` }} />
               </div>
-              <span>{usedPercent.toFixed(0)}%</span>
+              <span title={`${formatBytes(disk.freeBytes)} free of ${formatBytes(disk.totalBytes)}`}>{formatBytes(disk.freeBytes)} free</span>
             </div>
           );
         })}
@@ -67,4 +67,13 @@ function formatPercent(value: number): string {
 
 function clampPercent(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(value, 100)) : 0;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 GB";
+  }
+
+  const gigabytes = bytes / 1024 / 1024 / 1024;
+  return gigabytes >= 1024 ? `${(gigabytes / 1024).toFixed(1)} TB` : `${gigabytes.toFixed(0)} GB`;
 }

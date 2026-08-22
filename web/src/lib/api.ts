@@ -2,6 +2,13 @@ import type { AuditEvent, DashboardNotification, DashboardSnapshot, NewsItem, Se
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
+export class ApiError extends Error {
+  public constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export interface AuthSession {
   isAuthenticated: boolean;
   expiresAt?: string | null;
@@ -9,7 +16,7 @@ export interface AuthSession {
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
+    throw new ApiError(response.status, `Request failed with ${response.status}`);
   }
 
   return response.json() as Promise<T>;
@@ -60,7 +67,7 @@ export async function saveSetup(request: SetupRequest): Promise<SetupStatus> {
 export async function getDashboard(): Promise<DashboardSnapshot> {
   const response = await fetch(`${apiBaseUrl}/api/dashboard`, { credentials: "include" });
   if (!response.ok) {
-    throw new Error(`Dashboard request failed with ${response.status}`);
+    throw new ApiError(response.status, `Dashboard request failed with ${response.status}`);
   }
 
   return normalizeDashboard(await response.json());

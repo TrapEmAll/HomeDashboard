@@ -1,8 +1,10 @@
-import { Clapperboard, Download, ExternalLink, Film, Folder, Gamepad2, HardDrive, Radio, RotateCcw, Server, Tv, Workflow } from "lucide-react";
+import { Clapperboard, Download, ExternalLink, Film, Folder, Gamepad2, HardDrive, Radio, RotateCcw, Server, Star, Tv, Workflow } from "lucide-react";
 import type { ServiceCard, ServiceKind, ServiceStatus } from "../types/dashboard";
 
 interface Props {
   services: ServiceCard[];
+  favorites: string[];
+  onToggleFavorite: (serviceId: string) => void;
   onRestart: (serviceId: string) => void;
 }
 
@@ -36,9 +38,10 @@ const serviceGroups: Array<{ title: string; kinds: ServiceKind[] }> = [
   { title: "Utilities", kinds: ["GameServer"] }
 ];
 
-export function ServiceGrid({ services, onRestart }: Props) {
+export function ServiceGrid({ services, favorites, onToggleFavorite, onRestart }: Props) {
   const items = Array.isArray(services) ? services : [];
-  const grouped = groupServices(items);
+  const favoriteSet = new Set(favorites);
+  const grouped = groupServices([...items].sort((left, right) => Number(favoriteSet.has(right.id)) - Number(favoriteSet.has(left.id)) || left.name.localeCompare(right.name)));
 
   return (
     <section className="panel services-panel">
@@ -47,9 +50,9 @@ export function ServiceGrid({ services, onRestart }: Props) {
           <span className="section-kicker">Configured apps</span>
           <h2>Services</h2>
         </div>
-        <span>{items.length} configured</span>
+        <span>{items.length} visible</span>
       </div>
-      <div className="service-columns">
+      {items.length === 0 ? <div className="service-filter-empty">No services match this view.</div> : <div className="service-columns">
         {grouped.map((group) => (
           <div className="service-column" key={group.title}>
             <div className="service-column-heading">
@@ -92,6 +95,15 @@ export function ServiceGrid({ services, onRestart }: Props) {
                       </div>
                     </div>
                     <div className="service-actions">
+                      <button
+                        className={`icon-button favorite-button ${favoriteSet.has(service.id) ? "selected" : ""}`}
+                        type="button"
+                        title={favoriteSet.has(service.id) ? "Remove favorite" : "Add favorite"}
+                        aria-pressed={favoriteSet.has(service.id)}
+                        onClick={() => onToggleFavorite(service.id)}
+                      >
+                        <Star size={16} fill={favoriteSet.has(service.id) ? "currentColor" : "none"} />
+                      </button>
                       {service.url ? (
                         <a className="icon-button" href={service.url} target="_blank" rel="noreferrer" title="Open service">
                           <ExternalLink size={17} />
@@ -115,7 +127,7 @@ export function ServiceGrid({ services, onRestart }: Props) {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
     </section>
   );
 }
