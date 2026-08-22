@@ -103,7 +103,11 @@ powershell -ExecutionPolicy Bypass -File .\tools\open-elevated-update.ps1
 
 ## Configuration
 
-Edit `src/HomeDashboard.Api/appsettings.json` to define browser auth, service cards, RSS sources, API keys, persisted state location, and service integrations. Supported service kinds include Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks.
+After signing in, open **Dashboard settings** from the gear button to add, edit, or remove service cards and custom RSS/podcast feeds. You can also choose the default agent, enable the built-in intelligence catalog, store integration API keys, and opt services into restart controls. Saved API keys are masked; leave the field blank to keep an existing key. Restart the API service after saving to apply the new configuration.
+
+The settings editor supports Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks. Advanced installation and security values remain available in `appsettings.Local.json`; see [docs/configuration.md](docs/configuration.md).
+
+Keyboard controls are available while you are not typing in a field: `/` focuses service search, `R` refreshes, `S` opens settings, and `Escape` closes settings.
 
 Restart controls require browser confirmation, queue commands for `Dashboard:DefaultAgentId`, and write audit events for queued, rejected, and completed commands. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
 
