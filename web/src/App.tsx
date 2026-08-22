@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Activity, Bell, CheckCircle2, History, LogOut, RefreshCw, ShieldCheck, Wand2 } from "lucide-react";
-import { dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, requestRestart, saveSetup } from "./lib/api";
+import { dashboardEventsUrl, getDashboard, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SystemPanel } from "./components/SystemPanel";
@@ -70,7 +70,7 @@ export function App() {
 
     const events = new EventSource(dashboardEventsUrl(), { withCredentials: true });
     events.onmessage = (event) => {
-      setSnapshot(JSON.parse(event.data) as DashboardSnapshot);
+      setSnapshot(parseDashboardSnapshot(event.data));
       setLoading(false);
     };
     events.onerror = () => events.close();

@@ -19,10 +19,11 @@ public sealed class SetupService(
     {
         var security = securityOptions.Value;
         var dashboard = dashboardOptions.Value;
+        var hasDashboardPasswordHash = !string.IsNullOrWhiteSpace(security.DashboardPasswordHash);
+        var hasDashboardPassword = !IsPlaceholder(security.DashboardPassword);
         var usesPlaceholders = IsPlaceholder(security.DashboardApiKey)
             || IsPlaceholder(security.AgentApiKey)
-            || IsPlaceholder(security.DashboardPassword)
-            || string.IsNullOrWhiteSpace(security.DashboardPasswordHash) && string.IsNullOrWhiteSpace(security.DashboardPassword);
+            || !hasDashboardPasswordHash && !hasDashboardPassword;
 
         return new SetupStatus(
             !usesPlaceholders,
