@@ -1,4 +1,4 @@
-import type { AuditEvent, DashboardNotification, DashboardSnapshot, NewsItem, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats } from "../types/dashboard";
+import type { AuditEvent, DashboardNotification, DashboardSnapshot, NewsContentKind, NewsItem, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -163,7 +163,10 @@ function normalizeNewsItem(raw: unknown): NewsItem {
     title: asString(read(value, "title", "Title"), "Untitled"),
     url: asOptionalString(read(value, "url", "Url")),
     publishedAt: asOptionalString(read(value, "publishedAt", "PublishedAt")),
-    summary: asOptionalString(read(value, "summary", "Summary"))
+    summary: asOptionalString(read(value, "summary", "Summary")),
+    kind: normalizeNewsKind(read(value, "kind", "Kind")),
+    category: asString(read(value, "category", "Category"), "Technology"),
+    providerUrl: asOptionalString(read(value, "providerUrl", "ProviderUrl"))
   };
 }
 
@@ -203,6 +206,10 @@ function normalizeKind(value: unknown): ServiceKind {
 
 function normalizeSeverity(value: unknown): DashboardNotification["severity"] {
   return pickEnum(value, ["Info", "Warning", "Critical"], "Info");
+}
+
+function normalizeNewsKind(value: unknown): NewsContentKind {
+  return pickEnum(value, ["Article", "Podcast"], "Article");
 }
 
 function pickEnum<T extends string>(value: unknown, values: T[], fallback: T): T {

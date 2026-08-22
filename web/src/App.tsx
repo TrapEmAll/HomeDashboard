@@ -304,6 +304,7 @@ export function App() {
           <button type="button" onClick={() => document.getElementById("overview")?.scrollIntoView({ behavior: "smooth" })}>Overview</button>
           <button type="button" onClick={() => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" })}>Services</button>
           <button type="button" onClick={() => document.getElementById("activity")?.scrollIntoView({ behavior: "smooth" })}>Activity</button>
+          <button type="button" onClick={() => document.getElementById("content")?.scrollIntoView({ behavior: "smooth" })}>Intelligence</button>
         </nav>
         <div className="topbar-actions">
           <div className="live-pill" title="Dashboard update status">
@@ -435,9 +436,9 @@ export function App() {
               </section>
               <SystemPanel system={snapshot.system} />
               <AuditPanel events={snapshot.recentAuditEvents} />
-              <NewsPanel items={snapshot.news} />
             </aside> : null}
           </div>
+          <NewsPanel items={snapshot.news} />
         </>
       ) : (
         <div className="loading-panel">

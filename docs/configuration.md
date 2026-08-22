@@ -148,14 +148,32 @@ The API stores latest agent snapshots, rolling history, queued command state, an
 
 ## RSS feeds
 
-Add feeds under `Dashboard:NewsFeeds`:
+HomeDashboard includes a recommended catalog of technology, development, infrastructure, cybersecurity, and podcast feeds. Recommended podcast entries use official RSS for new episodes and include a Spotify discovery link. Disable the catalog while keeping only your own feeds with `Dashboard:IncludeRecommendedFeeds` set to `false`.
+
+Add custom feeds under `Dashboard:NewsFeeds`:
 
 ```json
 {
   "Name": "Ars Technica",
-  "Url": "https://feeds.arstechnica.com/arstechnica/index"
+  "Url": "https://feeds.arstechnica.com/arstechnica/index",
+  "Kind": "Article",
+  "Category": "Technology"
 }
 ```
+
+Custom podcast feed:
+
+```json
+{
+  "Name": "Example Security Show",
+  "Url": "https://example.com/podcast.xml",
+  "Kind": "Podcast",
+  "Category": "Cybersecurity",
+  "ProviderUrl": "https://open.spotify.com/search/Example%20Security%20Show"
+}
+```
+
+Supported `Kind` values are `Article` and `Podcast`. The intelligence stream searches title, summary, source, and category, and can also filter by kind and topic. Feed results are cached for ten minutes; failed refreshes retain the previous successful items.
 
 ## Web API URL
 
