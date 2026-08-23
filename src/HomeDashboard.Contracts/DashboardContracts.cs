@@ -77,7 +77,19 @@ public sealed record SystemStats(
     double CpuPercent,
     double MemoryUsedPercent,
     IReadOnlyList<DiskStats> Disks,
-    DateTimeOffset CapturedAt);
+    DateTimeOffset CapturedAt,
+    long UptimeSeconds = 0,
+    string? OsVersion = null,
+    bool PendingReboot = false,
+    long NetworkReceiveBytesPerSecond = 0,
+    long NetworkSendBytesPerSecond = 0,
+    IReadOnlyList<ProcessStats>? TopProcesses = null);
+
+public sealed record ProcessStats(
+    int ProcessId,
+    string Name,
+    long WorkingSetBytes,
+    TimeSpan CpuTime);
 
 public sealed record DiskStats(
     string Name,
@@ -267,3 +279,152 @@ public sealed record OpmlImportPreview(
     IReadOnlyList<NewsFeedSetting> Feeds,
     int FeedOutlineCount,
     int SkippedCount);
+
+public sealed record OperationsSnapshot(
+    DateTimeOffset GeneratedAt,
+    IReadOnlyList<OperationsActivity> Activity,
+    IReadOnlyList<MediaCalendarItem> Calendar,
+    IReadOnlyList<PlaybackSession> PlaybackSessions,
+    IReadOnlyList<DownloadQueueItem> Downloads,
+    IReadOnlyList<ServiceUptimeSummary> Uptime,
+    IReadOnlyList<StorageForecast> Storage,
+    IReadOnlyList<IncidentSummary> Incidents,
+    IReadOnlyList<MaintenanceWindow> Maintenance,
+    UpdateSummary Update);
+
+public sealed record OperationsActivity(
+    string Id,
+    DateTimeOffset OccurredAt,
+    string Source,
+    string Title,
+    string Detail,
+    OperationsActivityKind Kind,
+    NotificationSeverity Severity = NotificationSeverity.Info);
+
+public enum OperationsActivityKind
+{
+    Service,
+    Media,
+    Download,
+    Playback,
+    Maintenance,
+    Security,
+    System
+}
+
+public sealed record MediaCalendarItem(
+    string Id,
+    string Source,
+    string Title,
+    string? Subtitle,
+    DateTimeOffset AirsAt,
+    string MediaType,
+    bool Monitored,
+    bool HasFile,
+    Uri? Url = null);
+
+public sealed record PlaybackSession(
+    string Id,
+    string User,
+    string Title,
+    string? Subtitle,
+    string Player,
+    string Decision,
+    int ProgressPercent,
+    string? VideoResolution,
+    long? BandwidthKbps);
+
+public sealed record DownloadQueueItem(
+    string Id,
+    string Source,
+    string Name,
+    string Status,
+    double ProgressPercent,
+    long? SizeBytes,
+    long? RemainingBytes,
+    long? DownloadSpeedBytes,
+    TimeSpan? Eta,
+    bool CanPause,
+    bool CanRemove);
+
+public sealed record DownloadControlRequest(
+    string Source,
+    string ItemId,
+    DownloadControlAction Action,
+    bool DeleteData = false);
+
+public enum DownloadControlAction
+{
+    Pause,
+    Resume,
+    Recheck,
+    Remove
+}
+
+public sealed record ServiceUptimeSummary(
+    string ServiceId,
+    string Name,
+    double UptimePercent,
+    DateTimeOffset WindowStartedAt,
+    int IncidentCount,
+    ServiceStatus CurrentStatus);
+
+public sealed record StorageForecast(
+    string Name,
+    long TotalBytes,
+    long FreeBytes,
+    double UsedPercent,
+    long? DailyGrowthBytes,
+    int? DaysRemaining);
+
+public sealed record IncidentSummary(
+    string Id,
+    string ServiceId,
+    string ServiceName,
+    NotificationSeverity Severity,
+    string Message,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? ResolvedAt = null);
+
+public sealed record MaintenanceWindow(
+    string Id,
+    string Title,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string? ServiceId,
+    bool SuppressAlerts,
+    string CreatedBy);
+
+public sealed record CreateMaintenanceWindowRequest(
+    string Title,
+    DateTimeOffset StartsAt,
+    DateTimeOffset EndsAt,
+    string? ServiceId,
+    bool SuppressAlerts);
+
+public sealed record UpdateSummary(
+    string CurrentVersion,
+    string Channel,
+    Uri RepositoryUrl,
+    DateTimeOffset? LastCheckedAt,
+    bool UpdateAvailable,
+    string? LatestVersion);
+
+public sealed record ServiceDiscoveryResult(
+    IReadOnlyList<DiscoveredService> Services,
+    DateTimeOffset ScannedAt);
+
+public sealed record DiscoveredService(
+    string Id,
+    string Name,
+    ServiceKind Kind,
+    Uri Url,
+    int Port,
+    bool AlreadyConfigured);
+
+public sealed record DashboardBackup(
+    int FormatVersion,
+    DateTimeOffset CreatedAt,
+    DashboardSettings Settings,
+    IReadOnlyList<MaintenanceWindow> Maintenance,
+    string ApplicationVersion);

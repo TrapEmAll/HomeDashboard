@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.ServiceProcess;
+using System.Net.NetworkInformation;
 using HomeDashboard.Contracts;
+using Microsoft.Win32;
 using Microsoft.Extensions.Options;
 
 namespace HomeDashboard.Agent;
@@ -31,6 +33,9 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
     private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
+    private DateTimeOffset lastNetworkSampledAt = DateTimeOffset.UtcNow;
+    private long lastNetworkReceived = ReadNetworkBytes().Received;
+    private long lastNetworkSent = ReadNetworkBytes().Sent;
 
     public SystemStats Collect()
     {
@@ -40,12 +45,78 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
             .Select(drive => new DiskStats(drive.Name, drive.TotalSize, drive.AvailableFreeSpace))
             .ToArray();
 
+        var network = GetNetworkRates();
         return new SystemStats(
             Environment.MachineName,
             (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
             GetMemoryUsedPercent(GetProcessMemoryPercent()),
             disks,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            Environment.TickCount64 / 1000,
+            Environment.OSVersion.VersionString,
+            IsPendingReboot(),
+            network.Received,
+            network.Sent,
+            GetTopProcesses());
+    }
+
+    private (long Received, long Sent) GetNetworkRates()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var totals = ReadNetworkBytes();
+        var elapsed = Math.Max((now - lastNetworkSampledAt).TotalSeconds, 0.1);
+        var rates = (
+            Math.Max(0, (long)((totals.Received - lastNetworkReceived) / elapsed)),
+            Math.Max(0, (long)((totals.Sent - lastNetworkSent) / elapsed)));
+        lastNetworkSampledAt = now;
+        lastNetworkReceived = totals.Received;
+        lastNetworkSent = totals.Sent;
+        return rates;
+    }
+
+    private static (long Received, long Sent) ReadNetworkBytes()
+    {
+        try
+        {
+            var stats = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(item => item.OperationalStatus == OperationalStatus.Up && item.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+                .Select(item => item.GetIPv4Statistics())
+                .ToArray();
+            return (stats.Sum(item => item.BytesReceived), stats.Sum(item => item.BytesSent));
+        }
+        catch (NetworkInformationException)
+        {
+            return (0, 0);
+        }
+    }
+
+    private static IReadOnlyList<ProcessStats> GetTopProcesses()
+        => Process.GetProcesses().Select(process =>
+        {
+            try
+            {
+                return new ProcessStats(process.Id, process.ProcessName, process.WorkingSet64, process.TotalProcessorTime);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+            {
+                return null;
+            }
+            finally
+            {
+                process.Dispose();
+            }
+        }).Where(item => item is not null).Cast<ProcessStats>().OrderByDescending(item => item.WorkingSetBytes).Take(8).ToArray();
+
+    private static bool IsPendingReboot()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        using var windowsUpdate = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
+        using var sessionManager = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager");
+        return windowsUpdate is not null || sessionManager?.GetValue("PendingFileRenameOperations") is not null;
     }
 
     [SupportedOSPlatform("windows")]

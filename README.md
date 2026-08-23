@@ -2,7 +2,7 @@
 
 HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, first-run setup, browser login, alerts, audit history, live updates, and guarded restart commands.
 
-The dashboard command center includes a dark responsive service wall, live health filtering and search, persistent favorites, compact and comfortable density modes, a hideable activity rail, recent health pulse history, richer storage details, and session-expiry recovery. A searchable intelligence stream combines configured feeds with a built-in catalog of technology, IT, development, infrastructure, and cybersecurity reporting plus new podcast episodes and Spotify discovery links. Display preferences are stored only in the current browser.
+The dashboard command center includes a dark responsive service wall, live health filtering and search, persistent favorites, compact and comfortable density modes, a hideable activity rail, recent health pulse history, richer storage details, and session-expiry recovery. Its operations workspace adds a unified activity timeline, Plex sessions, Sonarr/Radarr calendar, qBittorrent and SABnzbd queues, incident and dependency views, maintenance windows, storage planning, service discovery, browser alerts, opt-in local weather, and configuration backup/restore. A searchable intelligence stream combines configured feeds with a built-in catalog of technology, IT, development, infrastructure, and cybersecurity reporting plus new podcast episodes and Spotify discovery links. Display preferences are stored only in the current browser.
 
 ## Repository layout
 
@@ -41,6 +41,13 @@ The API exposes:
 - `GET /api/system`
 - `GET /api/news`
 - `GET /api/audit`
+- `GET /api/operations`
+- `POST /api/downloads/control`
+- `GET /api/discovery`
+- `GET /api/maintenance`
+- `POST /api/maintenance`
+- `GET /api/backup`
+- `POST /api/backup/restore`
 - `GET /api/commands`
 - `POST /api/agent/snapshot`
 - `GET /api/agents`

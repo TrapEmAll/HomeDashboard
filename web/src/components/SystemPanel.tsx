@@ -1,4 +1,4 @@
-import { Cpu, HardDrive, MemoryStick, Server, TrendingUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Cpu, HardDrive, MemoryStick, RotateCcw, Server, Timer, TrendingUp } from "lucide-react";
 import type { AgentHistoryPoint, SystemStats } from "../types/dashboard";
 
 interface Props {
@@ -32,6 +32,12 @@ export function SystemPanel({ system, history = [] }: Props) {
         <Metric icon={<MemoryStick size={19} />} label="Memory" value={`${formatPercent(memoryPercent)}%`} tone="green" />
         <Metric icon={<HardDrive size={19} />} label="Disks" value={`${disks.length}`} tone="amber" />
       </div>
+      <div className="host-facts">
+        <span><Timer size={13} /><b>Uptime</b>{formatUptime(stats.uptimeSeconds ?? 0)}</span>
+        <span><ArrowDown size={13} /><b>Receive</b>{formatRate(stats.networkReceiveBytesPerSecond ?? 0)}</span>
+        <span><ArrowUp size={13} /><b>Send</b>{formatRate(stats.networkSendBytesPerSecond ?? 0)}</span>
+        {stats.pendingReboot ? <span className="pending-reboot"><RotateCcw size={13} /><b>Windows</b>Restart pending</span> : null}
+      </div>
       {history.length > 1 ? (
         <div className="telemetry-history">
           <div className="telemetry-history-heading"><TrendingUp size={14} /><span>Recent agent history</span><small>{history.length} samples</small></div>
@@ -53,6 +59,10 @@ export function SystemPanel({ system, history = [] }: Props) {
           );
         })}
       </div>
+      {stats.topProcesses?.length ? <div className="process-list">
+        <div className="process-list-heading"><span>Top processes</span><small>{stats.osVersion ?? "Windows"}</small></div>
+        {stats.topProcesses.slice(0, 5).map((process) => <div key={process.processId}><strong>{process.name}</strong><span>PID {process.processId}</span><b>{formatBytes(process.workingSetBytes)}</b></div>)}
+      </div> : null}
     </section>
   );
 }
@@ -99,4 +109,16 @@ function formatBytes(bytes: number): string {
 
   const gigabytes = bytes / 1024 / 1024 / 1024;
   return gigabytes >= 1024 ? `${(gigabytes / 1024).toFixed(1)} TB` : `${gigabytes.toFixed(0)} GB`;
+}
+
+function formatRate(bytes: number): string {
+  if (bytes < 1024) return `${bytes.toFixed(0)} B/s`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB/s`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB/s`;
+}
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor(seconds % 86400 / 3600);
+  return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
 }
