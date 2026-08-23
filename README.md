@@ -128,7 +128,7 @@ powershell -ExecutionPolicy Bypass -File .\tools\build-api.ps1
 
 If this reports that no compatible SDK is installed, install the .NET 8 SDK or a newer SDK and rerun the command. The complete Windows package additionally requires Node.js for the React production build.
 
-If publishing reports missing types such as `OperationsSnapshot`, the source folder contains files from different revisions. Refresh the updater and repair the checkout from `main` with this elevated PowerShell command from the HomeDashboard source folder:
+If publishing reports missing types such as `OperationsSnapshot`, the source folder contains files from different revisions or a stale incremental build cache. Refresh the updater and repair the checkout from `main` with this elevated PowerShell command from the HomeDashboard source folder. The publisher clears only HomeDashboard's project build artifacts before rebuilding:
 
 ```powershell
 Invoke-WebRequest "https://raw.githubusercontent.com/TrapEmAll/HomeDashboard/main/tools/update-homedashboard.ps1" -OutFile ".\tools\update-homedashboard.ps1"; powershell -ExecutionPolicy Bypass -File ".\tools\update-homedashboard.ps1"

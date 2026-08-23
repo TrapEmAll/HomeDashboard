@@ -20,11 +20,29 @@ $agentOutput = Join-Path $outputRoot "agent"
 $toolsOutput = Join-Path $outputRoot "tools"
 $zipPath = Join-Path $repoRoot "outputs/HomeDashboard-Windows.zip"
 
+function Remove-ProjectBuildArtifacts {
+    param([string]$Root)
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+    $projectNames = @("HomeDashboard.Contracts", "HomeDashboard.Api", "HomeDashboard.Agent")
+    foreach ($projectName in $projectNames) {
+        foreach ($directoryName in @("bin", "obj")) {
+            $candidate = [IO.Path]::GetFullPath((Join-Path $Root "src/$projectName/$directoryName"))
+            if (-not $candidate.StartsWith($rootPath, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to clean build artifacts outside the repository: '$candidate'."
+            }
+            Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 if ((Test-Path $operationsService) -and
     (-not (Test-Path $contractsFile) -or -not (Select-String -LiteralPath $contractsFile -SimpleMatch "record OperationsSnapshot" -Quiet))) {
     throw "The source tree contains OperationsService.cs without its shared contracts. Run tools\update-homedashboard.ps1 again to repair the mixed source update."
 }
 
+Write-Host "Cleaning stale .NET build artifacts..."
+Remove-ProjectBuildArtifacts $repoRoot
 Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 Remove-Item $apiWwwroot -Recurse -Force -ErrorAction SilentlyContinue
