@@ -1,4 +1,4 @@
-import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, NewsContentKind, NewsItem, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
+import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, NewsContentKind, NewsItem, OpmlImportPreview, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -87,6 +87,30 @@ export async function updateDashboardSettings(request: UpdateDashboardSettingsRe
     body: JSON.stringify(request)
   });
   return normalizeSettings(await readJson<unknown>(response));
+}
+
+export async function importOpmlFeeds(content: string): Promise<OpmlImportPreview> {
+  const response = await fetch(`${apiBaseUrl}/api/settings/import-opml`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content })
+  });
+  const raw = asRecord(await readJson<unknown>(response));
+  return {
+    feeds: asArray(read(raw, "feeds", "Feeds"), (feed) => {
+      const item = asRecord(feed);
+      return {
+        name: asString(read(item, "name", "Name"), "Imported feed"),
+        url: asString(read(item, "url", "Url"), ""),
+        kind: normalizeNewsKind(read(item, "kind", "Kind")),
+        category: asString(read(item, "category", "Category"), "Imported"),
+        providerUrl: asOptionalString(read(item, "providerUrl", "ProviderUrl"))
+      };
+    }),
+    feedOutlineCount: asNumber(read(raw, "feedOutlineCount", "FeedOutlineCount"), 0),
+    skippedCount: asNumber(read(raw, "skippedCount", "SkippedCount"), 0)
+  };
 }
 
 export async function getAgentHistory(agentId: string): Promise<AgentHistoryPoint[]> {

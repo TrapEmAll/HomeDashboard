@@ -2622,6 +2622,103 @@ body:has(.settings-backdrop) {
   font-size: 11px;
 }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+}
+
+.opml-import {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid rgba(239, 119, 188, 0.2);
+  border-radius: 8px;
+  background: rgba(239, 119, 188, 0.045);
+  padding: 11px 12px;
+}
+
+.opml-import > div {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+}
+
+.opml-import > div > svg {
+  flex: 0 0 auto;
+  color: var(--magenta);
+}
+
+.opml-import span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.opml-import strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.opml-import small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.opml-import button {
+  min-height: 36px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.opml-import button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.opml-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 11px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.opml-result svg {
+  flex: 0 0 auto;
+}
+
+.opml-result.success {
+  border-color: rgba(62, 226, 148, 0.24);
+  color: #baf7d7;
+  background: rgba(62, 226, 148, 0.06);
+}
+
+.opml-result.error {
+  border-color: rgba(255, 102, 117, 0.25);
+  color: #ffc0c6;
+  background: rgba(255, 102, 117, 0.06);
+}
+
 .settings-footer {
   justify-content: flex-end;
   border-top: 1px solid var(--line);
@@ -2769,5 +2866,14 @@ body:has(.settings-backdrop) {
 
   .settings-save-state {
     min-width: 100%;
+  }
+
+  .opml-import {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .opml-import button {
+    width: 100%;
   }
 }

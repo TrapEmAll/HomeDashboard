@@ -1,6 +1,7 @@
-import { CheckCircle2, KeyRound, Plus, Radio, Rss, Save, Server, Trash2, X } from "lucide-react";
-import { useState } from "react";
-import type { FormEvent } from "react";
+import { CheckCircle2, FileUp, KeyRound, Plus, Radio, Rss, Save, Server, Trash2, X } from "lucide-react";
+import { useRef, useState } from "react";
+import type { ChangeEvent, FormEvent } from "react";
+import { importOpmlFeeds } from "../lib/api";
 import type { DashboardSettings, NewsContentKind, NewsFeedSetting, ServiceKind, UpdateDashboardSettingsRequest } from "../types/dashboard";
 
 interface Props {
@@ -24,6 +25,10 @@ export function SettingsDrawer({ settings, saving, error, onClose, onSave }: Pro
   const [includeRecommendedFeeds, setIncludeRecommendedFeeds] = useState(settings.includeRecommendedFeeds);
   const [services, setServices] = useState<EditableService[]>(() => settings.services.map((service) => ({ ...service, apiKey: "", clearApiKey: false })));
   const [feeds, setFeeds] = useState<NewsFeedSetting[]>(() => settings.newsFeeds.map((feed) => ({ ...feed })));
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const opmlInput = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -61,6 +66,51 @@ export function SettingsDrawer({ settings, saving, error, onClose, onSave }: Pro
 
   function addFeed() {
     setFeeds((current) => [...current, { name: "New feed", url: "", kind: "Article", category: "Technology", providerUrl: "" }]);
+  }
+
+  async function importOpml(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    setImportMessage(null);
+    setImportError(null);
+    if (file.size > 2_000_000) {
+      setImportError("That OPML file is larger than the 2 MB import limit.");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const preview = await importOpmlFeeds(await file.text());
+      const existingUrls = new Set(feeds.map((feed) => normalizeFeedUrl(feed.url)));
+      const imported = preview.feeds.filter((feed) => {
+        const normalized = normalizeFeedUrl(feed.url);
+        if (existingUrls.has(normalized)) {
+          return false;
+        }
+        existingUrls.add(normalized);
+        return true;
+      });
+      const alreadyPresent = preview.feeds.length - imported.length;
+      setFeeds((current) => [...current, ...imported]);
+
+      if (preview.feedOutlineCount === 0) {
+        setImportError("No RSS or Atom feed outlines were found in that OPML file.");
+      } else {
+        const details = [
+          alreadyPresent > 0 ? `${alreadyPresent} already present` : null,
+          preview.skippedCount > 0 ? `${preview.skippedCount} invalid or repeated` : null
+        ].filter(Boolean).join(", ");
+        setImportMessage(`${imported.length} feed${imported.length === 1 ? "" : "s"} added to the editor${details ? `; ${details} skipped` : ""}. Save changes to apply them.`);
+      }
+    } catch (ex) {
+      setImportError(ex instanceof Error ? ex.message : "The OPML file could not be imported.");
+    } finally {
+      setImporting(false);
+    }
   }
 
   return (
@@ -134,6 +184,16 @@ export function SettingsDrawer({ settings, saving, error, onClose, onSave }: Pro
           ) : (
             <div className="settings-records">
               <div className="settings-note"><Radio size={17} /><span>These are your own sources. Built-in recommendations are controlled by the toggle above.</span></div>
+              <div className="opml-import">
+                <div>
+                  <FileUp size={18} />
+                  <span><strong>Import OPML subscriptions</strong><small>Add feeds exported from Feedly, Inoreader, FreshRSS, Thunderbird, and other RSS readers.</small></span>
+                </div>
+                <input ref={opmlInput} className="visually-hidden" type="file" accept=".opml,.xml,text/x-opml,text/xml,application/xml" onChange={(event) => void importOpml(event)} />
+                <button className="secondary-button" type="button" disabled={importing} onClick={() => opmlInput.current?.click()}><FileUp size={16} /> {importing ? "Reading..." : "Choose OPML"}</button>
+              </div>
+              {importMessage ? <div className="opml-result success"><CheckCircle2 size={16} /><span>{importMessage}</span></div> : null}
+              {importError ? <div className="opml-result error"><X size={16} /><span>{importError}</span></div> : null}
               {feeds.map((feed, index) => (
                 <section className="settings-record" key={`${feed.name}-${index}`}>
                   <div className="settings-record-heading">
@@ -166,4 +226,14 @@ export function SettingsDrawer({ settings, saving, error, onClose, onSave }: Pro
       </form>
     </div>
   );
+}
+
+function normalizeFeedUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.toString().trimEnd().replace(/\/$/, "").toLocaleLowerCase();
+  } catch {
+    return value.trim().replace(/\/$/, "").toLocaleLowerCase();
+  }
 }

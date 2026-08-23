@@ -38,6 +38,7 @@ builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
 builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
 builder.Services.AddSingleton<ISetupService, SetupService>();
 builder.Services.AddSingleton<ILocalSettingsWriter, LocalSettingsWriter>();
+builder.Services.AddSingleton<IOpmlImportService, OpmlImportService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
@@ -116,6 +117,17 @@ app.MapPut("/api/settings", async (UpdateDashboardSettingsRequest request, ISetu
     try
     {
         return Results.Ok(await setup.UpdateSettingsAsync(request, cancellationToken));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+app.MapPost("/api/settings/import-opml", (OpmlImportRequest request, IOpmlImportService importer) =>
+{
+    try
+    {
+        return Results.Ok(importer.Parse(request.Content));
     }
     catch (InvalidOperationException ex)
     {
