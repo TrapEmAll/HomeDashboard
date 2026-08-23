@@ -96,6 +96,8 @@ The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
 - `tools/update-homedashboard.ps1`, an updater that downloads a GitHub branch, preserves local config/data, rebuilds, reinstalls, and restarts the services.
 - `tools/open-elevated-update.ps1`, a launcher that opens an elevated PowerShell window in the current source folder and runs the updater.
 
+Before changing files, the updater writes a timestamped durable backup under `backups/` containing packaged and source-local configuration and data. It also stages the previous runnable package and automatically restores it, restores user state, and restarts the existing services if downloading, publishing, or installation fails. Successful-update backups are retained for manual recovery. Direct runs of `publish-windows.ps1` independently back up and restore packaged configuration and data, including on build failure.
+
 Update an existing source-based install from GitHub with:
 
 ```powershell
