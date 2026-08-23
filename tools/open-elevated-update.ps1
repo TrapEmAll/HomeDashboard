@@ -19,12 +19,10 @@ else {
 $toolsRoot = Join-Path $sourceRoot "tools"
 $updater = Join-Path $toolsRoot "update-homedashboard.ps1"
 
-if (-not (Test-Path $updater)) {
-    New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
-    $rawUrl = "https://raw.githubusercontent.com/$Repository/$Branch/tools/update-homedashboard.ps1"
-    Write-Host "Downloading updater from $rawUrl..."
-    Invoke-WebRequest -Uri $rawUrl -OutFile $updater
-}
+New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+$rawUrl = "https://raw.githubusercontent.com/$Repository/$Branch/tools/update-homedashboard.ps1"
+Write-Host "Refreshing updater from $rawUrl..."
+Invoke-WebRequest -Uri $rawUrl -OutFile $updater
 
 $arguments = @(
     "-NoExit",

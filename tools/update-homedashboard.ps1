@@ -65,6 +65,44 @@ function Restore-IfExists {
     }
 }
 
+function Sync-SourceTree {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    $sourcePath = (Resolve-Path $Source).Path.TrimEnd('\')
+    $destinationPath = (Resolve-Path $Destination).Path.TrimEnd('\')
+    $sourcePrefixLength = $sourcePath.Length + 1
+    $copied = 0
+
+    Get-ChildItem -LiteralPath $sourcePath -Recurse -File | ForEach-Object {
+        $relativePath = $_.FullName.Substring($sourcePrefixLength)
+        $destinationFile = Join-Path $destinationPath $relativePath
+        $destinationDirectory = Split-Path $destinationFile
+        New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+        Copy-Item -LiteralPath $_.FullName -Destination $destinationFile -Force
+        $copied++
+    }
+
+    if ($copied -eq 0) {
+        throw "Downloaded archive did not contain any source files."
+    }
+
+    Write-Host "Synchronized $copied source files."
+}
+
+function Assert-SourceConsistency {
+    param([string]$Root)
+
+    $operationsService = Join-Path $Root "src/HomeDashboard.Api/OperationsService.cs"
+    $contracts = Join-Path $Root "src/HomeDashboard.Contracts/DashboardContracts.cs"
+    if ((Test-Path $operationsService) -and
+        (-not (Test-Path $contracts) -or -not (Select-String -LiteralPath $contracts -SimpleMatch "record OperationsSnapshot" -Quiet))) {
+        throw "The downloaded source archive is inconsistent: operations API contracts are missing. Download main again and retry."
+    }
+}
+
 Assert-Administrator
 
 $sourceRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -102,8 +140,10 @@ try {
         throw "Downloaded archive did not contain a source folder."
     }
 
+    Assert-SourceConsistency $downloadedRoot.FullName
     Write-Host "Updating source files..."
-    Copy-Item (Join-Path $downloadedRoot.FullName "*") $sourceRoot -Recurse -Force
+    Sync-SourceTree $downloadedRoot.FullName $sourceRoot
+    Assert-SourceConsistency $sourceRoot
 
     Write-Host "Publishing Windows package..."
     & $publishScript -SelfContained:$SelfContained
