@@ -84,6 +84,23 @@ public sealed class DashboardServiceTests
         Assert.Equal(3600, snapshot.System.UptimeSeconds);
     }
 
+    [Fact]
+    public async Task GetSnapshotAsync_reuses_recent_snapshot_work()
+    {
+        var system = new SystemStats("api-host", 10, 20, [], DateTimeOffset.UtcNow);
+        var services = new CountingServiceProvider(Card(ServiceStatus.Online, "Online"));
+        var store = new EmptyStore();
+        var dashboard = new DashboardService(
+            services, new SystemProvider(system), new NewsProvider(), store, store,
+            Options.Create(new DashboardOptions()), NullLogger<DashboardService>.Instance);
+
+        var first = await dashboard.GetSnapshotAsync(CancellationToken.None);
+        var second = await dashboard.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, services.RequestCount);
+    }
+
     private static ServiceCard Card(ServiceStatus status, string message)
         => new("plex", "Plex", ServiceKind.Plex, "Media", null, status, false, DateTimeOffset.UtcNow, message, []);
 
@@ -91,6 +108,16 @@ public sealed class DashboardServiceTests
     {
         public Task<IReadOnlyList<ServiceCard>> GetServicesAsync(CancellationToken cancellationToken)
             => Task.FromResult<IReadOnlyList<ServiceCard>>([card]);
+    }
+
+    private sealed class CountingServiceProvider(ServiceCard card) : IServiceStatusProvider
+    {
+        public int RequestCount { get; private set; }
+        public Task<IReadOnlyList<ServiceCard>> GetServicesAsync(CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult<IReadOnlyList<ServiceCard>>([card]);
+        }
     }
 
     private sealed class SystemProvider(SystemStats stats) : ISystemStatsProvider

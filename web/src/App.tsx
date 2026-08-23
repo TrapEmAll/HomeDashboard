@@ -33,6 +33,7 @@ export function App() {
   const [favorites, setFavorites] = useState<string[]>(() => readStoredArray("homedashboard-favorites"));
   const [healthHistory, setHealthHistory] = useState<number[]>(() => readStoredNumbers("homedashboard-health-history"));
   const searchRef = useRef<HTMLInputElement>(null);
+  const loadRequestRef = useRef<Promise<void> | null>(null);
   const [setupForm, setSetupForm] = useState<SetupRequest>({
     dashboardPassword: "",
     dashboardApiKey: "",
@@ -49,23 +50,29 @@ export function App() {
     ]
   });
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      setSnapshot(await getDashboard());
-      setAuthenticated(true);
-    } catch (ex) {
-      if (ex instanceof ApiError && ex.status === 401) {
-        setAuthenticated(false);
-        setSnapshot(null);
-        setError("Your session expired. Sign in again.");
-        return;
+  function load(): Promise<void> {
+    if (loadRequestRef.current) return loadRequestRef.current;
+    const request = (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        setSnapshot(await getDashboard());
+        setAuthenticated(true);
+      } catch (ex) {
+        if (ex instanceof ApiError && ex.status === 401) {
+          setAuthenticated(false);
+          setSnapshot(null);
+          setError("Your session expired. Sign in again.");
+          return;
+        }
+        setError(ex instanceof Error ? ex.message : "Dashboard request failed.");
+      } finally {
+        setLoading(false);
       }
-      setError(ex instanceof Error ? ex.message : "Dashboard request failed.");
-    } finally {
-      setLoading(false);
-    }
+    })();
+    loadRequestRef.current = request;
+    void request.finally(() => { if (loadRequestRef.current === request) loadRequestRef.current = null; });
+    return request;
   }
 
   useEffect(() => {
@@ -90,26 +97,47 @@ export function App() {
       return;
     }
 
-    const events = new EventSource(dashboardEventsUrl(), { withCredentials: true });
-    events.onmessage = (event) => {
-      try {
-        setSnapshot(parseDashboardSnapshot(event.data));
-        setLiveError(null);
-        setLoading(false);
-      } catch {
-        setLiveError("Live updates paused after a malformed update. Polling is still active.");
-        events.close();
-      }
+    let events: EventSource | null = null;
+    let pollHandle: number | null = null;
+    let reconnectHandle: number | null = null;
+    let disposed = false;
+    const stopPolling = () => { if (pollHandle !== null) window.clearInterval(pollHandle); pollHandle = null; };
+    const startPolling = () => {
+      if (pollHandle !== null) return;
+      pollHandle = window.setInterval(() => { if (!document.hidden && navigator.onLine) void load(); }, 60_000);
     };
-    events.onerror = () => {
-      setLiveError("Live updates disconnected. Polling is still active.");
-      events.close();
+    const closeEvents = () => { events?.close(); events = null; };
+    const connect = () => {
+      if (disposed || document.hidden || !navigator.onLine || events) return;
+      events = new EventSource(dashboardEventsUrl(), { withCredentials: true });
+      events.onopen = () => { stopPolling(); setLiveError(null); };
+      events.onmessage = (event) => {
+        try { setSnapshot(parseDashboardSnapshot(event.data)); setLiveError(null); setLoading(false); }
+        catch { setLiveError("Live updates paused after a malformed update. Polling is active."); closeEvents(); startPolling(); }
+      };
+      events.onerror = () => {
+        closeEvents();
+        setLiveError("Live updates disconnected. Polling is active.");
+        startPolling();
+        if (reconnectHandle === null) reconnectHandle = window.setTimeout(() => { reconnectHandle = null; connect(); }, 15_000);
+      };
     };
-
-    const handle = window.setInterval(() => void load(), 30_000);
+    const handleVisibility = () => {
+      if (document.hidden) { closeEvents(); stopPolling(); }
+      else { void load(); connect(); }
+    };
+    const handleOnline = () => { setLiveError("Connection restored. Reconnecting live updates."); void load(); connect(); };
+    const handleOffline = () => { closeEvents(); stopPolling(); setLiveError("This device is offline. Network requests are paused."); };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    connect();
     return () => {
-      events.close();
-      window.clearInterval(handle);
+      disposed = true; closeEvents(); stopPolling();
+      if (reconnectHandle !== null) window.clearTimeout(reconnectHandle);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, [authenticated]);
 
@@ -120,10 +148,11 @@ export function App() {
       return;
     }
 
-    void getAgentHistory(primaryAgentId)
-      .then(setAgentHistory)
-      .catch(() => setAgentHistory([]));
-  }, [authenticated, primaryAgentId, snapshot?.generatedAt]);
+    const refreshHistory = () => { if (!document.hidden) void getAgentHistory(primaryAgentId).then(setAgentHistory).catch(() => setAgentHistory([])); };
+    refreshHistory();
+    const handle = window.setInterval(refreshHistory, 120_000);
+    return () => window.clearInterval(handle);
+  }, [authenticated, primaryAgentId]);
 
   useEffect(() => {
     function handleKeyboard(event: KeyboardEvent) {

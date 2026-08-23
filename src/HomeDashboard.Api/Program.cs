@@ -1,9 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using System.IO.Compression;
+using System.Net;
 using HomeDashboard.Api;
 using HomeDashboard.Contracts;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -24,17 +27,27 @@ builder.Services
     .AddOptions<DashboardSecurityOptions>()
     .Bind(builder.Configuration.GetSection("Security"));
 
-builder.Services.AddHttpClient("health-checks", client => client.Timeout = TimeSpan.FromSeconds(3));
+builder.Services.AddHttpClient("health-checks", client => client.Timeout = TimeSpan.FromSeconds(3))
+    .ConfigurePrimaryHttpMessageHandler(CreateOptimizedHandler);
 builder.Services.AddHttpClient("news", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(5);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("HomeDashboard/0.1");
-});
+}).ConfigurePrimaryHttpMessageHandler(CreateOptimizedHandler);
 builder.Services.AddHttpClient("operations", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(8);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("HomeDashboard/0.1");
+}).ConfigurePrimaryHttpMessageHandler(CreateOptimizedHandler);
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
 });
+builder.Services.Configure<BrotliCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
 builder.Services.AddRateLimiter(rateLimit =>
 {
     rateLimit.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -84,7 +97,16 @@ var app = builder.Build();
 
 app.UseCors();
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseResponseCompression();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        context.Context.Response.Headers.CacheControl = context.File.Name.Contains('-', StringComparison.Ordinal)
+            ? "public,max-age=31536000,immutable"
+            : "no-cache";
+    }
+});
 app.UseRateLimiter();
 app.UseMiddleware<ApiKeyMiddleware>();
 
@@ -217,7 +239,7 @@ app.MapGet("/api/events", async (IDashboardService dashboard, HttpContext contex
         var snapshot = await dashboard.GetSnapshotAsync(cancellationToken);
         await context.Response.WriteAsync($"data: {JsonSerializer.Serialize(snapshot, eventJsonOptions)}\n\n", cancellationToken);
         await context.Response.Body.FlushAsync(cancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
     }
 });
 app.MapPost("/api/services/{id}/restart", (string id, RestartRequest request, IRestartCoordinator restarts) =>
@@ -249,6 +271,15 @@ app.MapPost("/api/agent/{agentId}/commands/{commandId}/complete", (string agentI
     return Results.NoContent();
 });
 app.MapFallbackToFile("index.html");
+
+static SocketsHttpHandler CreateOptimizedHandler() => new()
+{
+    AutomaticDecompression = DecompressionMethods.All,
+    ConnectTimeout = TimeSpan.FromSeconds(3),
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+    PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+    MaxConnectionsPerServer = 8
+};
 
 app.Run();
 

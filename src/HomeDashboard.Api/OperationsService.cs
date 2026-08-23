@@ -30,8 +30,36 @@ public sealed class OperationsService(
     private readonly string maintenancePath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(options.Value.DataPath, AppContext.BaseDirectory)) ?? AppContext.BaseDirectory, "homedashboard-maintenance.json");
     private readonly ConcurrentDictionary<string, MaintenanceWindow> maintenance = LoadMaintenance(
         Path.Combine(Path.GetDirectoryName(Path.GetFullPath(options.Value.DataPath, AppContext.BaseDirectory)) ?? AppContext.BaseDirectory, "homedashboard-maintenance.json"));
+    private readonly SemaphoreSlim snapshotLock = new(1, 1);
+    private OperationsSnapshot? cachedSnapshot;
+    private DateTimeOffset snapshotExpiresAt = DateTimeOffset.MinValue;
 
     public async Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (cachedSnapshot is not null && DateTimeOffset.UtcNow < snapshotExpiresAt)
+        {
+            return cachedSnapshot;
+        }
+
+        await snapshotLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (cachedSnapshot is not null && DateTimeOffset.UtcNow < snapshotExpiresAt)
+            {
+                return cachedSnapshot;
+            }
+
+            cachedSnapshot = await BuildSnapshotAsync(cancellationToken);
+            snapshotExpiresAt = DateTimeOffset.UtcNow.AddSeconds(10);
+            return cachedSnapshot;
+        }
+        finally
+        {
+            snapshotLock.Release();
+        }
+    }
+
+    private async Task<OperationsSnapshot> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("operations");
         var servicesTask = GetServicesAsync(cancellationToken);
@@ -114,6 +142,7 @@ public sealed class OperationsService(
             Guid.NewGuid().ToString("n"), request.Title.Trim(), request.StartsAt, request.EndsAt,
             string.IsNullOrWhiteSpace(request.ServiceId) ? null : request.ServiceId.Trim(), request.SuppressAlerts, actor);
         maintenance[window.Id] = window;
+        snapshotExpiresAt = DateTimeOffset.MinValue;
         PersistMaintenance();
         return window;
     }
@@ -123,6 +152,7 @@ public sealed class OperationsService(
         var removed = maintenance.TryRemove(id, out _);
         if (removed)
         {
+            snapshotExpiresAt = DateTimeOffset.MinValue;
             PersistMaintenance();
         }
         return removed;
@@ -135,6 +165,7 @@ public sealed class OperationsService(
         {
             maintenance[window.Id] = window;
         }
+        snapshotExpiresAt = DateTimeOffset.MinValue;
         PersistMaintenance();
     }
 
@@ -206,11 +237,20 @@ public sealed class OperationsService(
             using var response = await client.PostAsync(BuildUri(service.Url, endpoint), new FormUrlEncodedContent(values), cancellationToken);
             if (response.StatusCode != System.Net.HttpStatusCode.NotFound || request.Action is not (DownloadControlAction.Pause or DownloadControlAction.Resume))
             {
-                return response.IsSuccessStatusCode;
+                if (response.IsSuccessStatusCode)
+                {
+                    snapshotExpiresAt = DateTimeOffset.MinValue;
+                    return true;
+                }
+                return false;
             }
 
             var legacyEndpoint = request.Action == DownloadControlAction.Pause ? "/api/v2/torrents/pause" : "/api/v2/torrents/resume";
             using var legacyResponse = await client.PostAsync(BuildUri(service.Url, legacyEndpoint), new FormUrlEncodedContent(values), cancellationToken);
+            if (legacyResponse.IsSuccessStatusCode)
+            {
+                snapshotExpiresAt = DateTimeOffset.MinValue;
+            }
             return legacyResponse.IsSuccessStatusCode;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)

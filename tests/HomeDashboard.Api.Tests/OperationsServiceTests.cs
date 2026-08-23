@@ -35,6 +35,24 @@ public sealed class OperationsServiceTests
         Assert.Equal("Patch window", Assert.Single(recreated.GetMaintenance()).Title);
     }
 
+    [Fact]
+    public async Task Snapshot_reuses_recent_integration_results()
+    {
+        var options = new DashboardOptions
+        {
+            IncludeRecommendedFeeds = false,
+            DataPath = Path.Combine(Path.GetTempPath(), "homedashboard-tests", Guid.NewGuid().ToString("n"), "state.json")
+        };
+        var services = new CountingServiceProvider();
+        var service = new OperationsService(Options.Create(options), services, new AuditStore(), new ClientFactory(), NullLogger<OperationsService>.Instance);
+
+        var first = await service.GetSnapshotAsync(CancellationToken.None);
+        var second = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, services.RequestCount);
+    }
+
     private static OperationsService CreateService(out DashboardOptions options)
     {
         options = new DashboardOptions
@@ -59,6 +77,16 @@ public sealed class OperationsServiceTests
             => Task.FromResult<IReadOnlyList<ServiceCard>>([
                 new ServiceCard("plex", "Plex", ServiceKind.Plex, "Media", null, ServiceStatus.Offline, false, DateTimeOffset.UtcNow, "Connection refused.", [])
             ]);
+    }
+
+    private sealed class CountingServiceProvider : IServiceStatusProvider
+    {
+        public int RequestCount { get; private set; }
+        public Task<IReadOnlyList<ServiceCard>> GetServicesAsync(CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult<IReadOnlyList<ServiceCard>>([]);
+        }
     }
 
     private sealed class AuditStore : IAgentCommandStore

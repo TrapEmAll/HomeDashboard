@@ -156,6 +156,10 @@ The API stores latest agent snapshots, rolling history, queued command state, an
 
 HomeDashboard includes a recommended catalog of technology, development, infrastructure, cybersecurity, and podcast feeds. Recommended podcast entries use official RSS for new episodes and include a Spotify discovery link. Disable the catalog while keeping only your own feeds with `Dashboard:IncludeRecommendedFeeds` set to `false`.
 
+The intelligence reader supports combined text, content type, topic, source, age, read-state, and saved-item filters with newest, oldest, source, and title sorting. Read, saved, hidden, layout, and density state is local to each browser. Podcast feeds can expose episode artwork, duration, and audio enclosures for inline playback; unsupported feeds retain their normal episode-page link.
+
+Feed downloads are cached for ten minutes and limited to four concurrent requests. HomeDashboard sends ETag and Last-Modified validators on later refreshes and retains each feed's previous successful items if that source is temporarily unavailable.
+
 Add custom feeds under `Dashboard:NewsFeeds`:
 
 ```json
@@ -220,6 +224,8 @@ Fresh agent snapshots supply CPU, memory, disks, uptime, operating system, reboo
 The dashboard includes active alerts for offline/degraded services, stale agents, and disks above 90% usage. Restart queue/rejection/completion records appear in the audit panel and are also available from `GET /api/audit`.
 
 The browser subscribes to `GET /api/events` for server-sent dashboard updates and keeps polling as a fallback.
+
+Live snapshots are emitted every 30 seconds and shared server-side for five seconds to collapse simultaneous requests. The browser does not run fallback polling while the event stream is healthy, suspends dashboard and operations refreshes in hidden tabs, deduplicates overlapping requests, and reconnects after network recovery. Operations snapshots are shared for ten seconds and action endpoints invalidate that cache immediately. JSON responses use fast Brotli or gzip compression, hashed web assets receive immutable cache headers, and outbound integration clients reuse pooled connections.
 
 ## Windows package
 

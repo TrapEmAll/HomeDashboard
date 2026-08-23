@@ -97,6 +97,9 @@ export interface NewsItem {
   kind: NewsContentKind;
   category: string;
   providerUrl?: string | null;
+  mediaUrl?: string | null;
+  imageUrl?: string | null;
+  duration?: string | null;
 }
 
 export type NewsContentKind = "Article" | "Podcast";
