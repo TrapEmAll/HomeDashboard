@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { Activity, Bell, CheckCircle2, Clock3, Columns3, Gauge, History, LayoutGrid, LogOut, PanelRightClose, PanelRightOpen, RefreshCw, Search, Server, Settings, ShieldCheck, Signal, TriangleAlert, Wand2, X } from "lucide-react";
 import { ApiError, dashboardEventsUrl, getAgentHistory, getDashboard, getDashboardSettings, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup, updateDashboardSettings } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
+import { OperationsWorkspace } from "./components/OperationsWorkspace";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { SystemPanel } from "./components/SystemPanel";
@@ -379,6 +380,7 @@ export function App() {
           <button type="button" onClick={() => document.getElementById("overview")?.scrollIntoView({ behavior: "smooth" })}>Overview</button>
           <button type="button" onClick={() => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" })}>Services</button>
           <button type="button" onClick={() => document.getElementById("activity")?.scrollIntoView({ behavior: "smooth" })}>Activity</button>
+          <button type="button" onClick={() => document.getElementById("operations")?.scrollIntoView({ behavior: "smooth" })}>Operations</button>
           <button type="button" onClick={() => document.getElementById("content")?.scrollIntoView({ behavior: "smooth" })}>Intelligence</button>
         </nav>
         <div className="topbar-actions">
@@ -516,6 +518,7 @@ export function App() {
               <AuditPanel events={snapshot.recentAuditEvents} />
             </aside> : null}
           </div>
+          <OperationsWorkspace authenticated={authenticated} />
           <NewsPanel items={snapshot.news} />
         </>
       ) : (

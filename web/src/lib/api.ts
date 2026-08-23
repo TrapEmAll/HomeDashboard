@@ -1,4 +1,4 @@
-import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, NewsContentKind, NewsItem, OpmlImportPreview, ServiceCard, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
+import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -131,6 +131,64 @@ export async function requestRestart(serviceId: string): Promise<void> {
   }
 }
 
+export async function getOperations(): Promise<OperationsSnapshot> {
+  const response = await fetch(`${apiBaseUrl}/api/operations`, { credentials: "include" });
+  return readJson<OperationsSnapshot>(response);
+}
+
+export async function controlDownload(source: string, itemId: string, action: DownloadControlAction, deleteData = false): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/downloads/control`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, itemId, action, deleteData })
+  });
+  await readJson<unknown>(response);
+}
+
+export async function discoverServices(): Promise<ServiceDiscoveryResult> {
+  const response = await fetch(`${apiBaseUrl}/api/discovery`, { credentials: "include" });
+  return readJson<ServiceDiscoveryResult>(response);
+}
+
+export async function createMaintenanceWindow(request: Omit<MaintenanceWindow, "id" | "createdBy">): Promise<MaintenanceWindow> {
+  const response = await fetch(`${apiBaseUrl}/api/maintenance`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request)
+  });
+  return readJson<MaintenanceWindow>(response);
+}
+
+export async function removeMaintenanceWindow(id: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/maintenance/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  if (!response.ok && response.status !== 204) {
+    throw new ApiError(response.status, `Maintenance removal failed with ${response.status}`);
+  }
+}
+
+export async function downloadBackup(): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/backup`, { credentials: "include" });
+  const backup = await readJson<unknown>(response);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
+  link.download = `HomeDashboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+export async function restoreBackup(content: string): Promise<void> {
+  const backup = JSON.parse(content) as unknown;
+  const response = await fetch(`${apiBaseUrl}/api/backup/restore`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(backup)
+  });
+  await readJson<unknown>(response);
+}
+
 export function dashboardEventsUrl(): string {
   return `${apiBaseUrl}/api/events`;
 }
@@ -242,7 +300,21 @@ function normalizeSystem(raw: unknown): SystemStats {
         freeBytes: asNumber(read(item, "freeBytes", "FreeBytes"), 0)
       };
     }),
-    capturedAt: asString(read(value, "capturedAt", "CapturedAt"), new Date().toISOString())
+    capturedAt: asString(read(value, "capturedAt", "CapturedAt"), new Date().toISOString()),
+    uptimeSeconds: asNumber(read(value, "uptimeSeconds", "UptimeSeconds"), 0),
+    osVersion: asOptionalString(read(value, "osVersion", "OsVersion")),
+    pendingReboot: Boolean(read(value, "pendingReboot", "PendingReboot")),
+    networkReceiveBytesPerSecond: asNumber(read(value, "networkReceiveBytesPerSecond", "NetworkReceiveBytesPerSecond"), 0),
+    networkSendBytesPerSecond: asNumber(read(value, "networkSendBytesPerSecond", "NetworkSendBytesPerSecond"), 0),
+    topProcesses: asArray(read(value, "topProcesses", "TopProcesses"), (process) => {
+      const item = asRecord(process);
+      return {
+        processId: asNumber(read(item, "processId", "ProcessId"), 0),
+        name: asString(read(item, "name", "Name"), "Process"),
+        workingSetBytes: asNumber(read(item, "workingSetBytes", "WorkingSetBytes"), 0),
+        cpuTime: asString(read(item, "cpuTime", "CpuTime"), "00:00:00")
+      };
+    })
   };
 }
 
