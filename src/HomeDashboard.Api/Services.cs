@@ -67,16 +67,17 @@ public sealed class DashboardService(
     INewsProvider newsProvider,
     IAgentSnapshotStore agentSnapshotStore,
     IAgentCommandStore commandStore,
-    IOptions<DashboardOptions> options) : IDashboardService
+    IOptions<DashboardOptions> options,
+    ILogger<DashboardService> logger) : IDashboardService
 {
     public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
     {
-        var servicesTask = serviceStatusProvider.GetServicesAsync(cancellationToken);
-        var newsTask = newsProvider.GetNewsAsync(cancellationToken);
+        var servicesTask = GetServicesSafelyAsync(cancellationToken);
+        var newsTask = GetNewsSafelyAsync(cancellationToken);
         var latestAgent = agentSnapshotStore.GetLatest(options.Value.DefaultAgentId);
         var configuredServices = await servicesTask;
         var services = MergeServices(configuredServices, latestAgent?.Services);
-        var system = latestAgent?.System ?? systemStatsProvider.GetStats();
+        var system = latestAgent?.System ?? GetSystemStatsSafely();
         var agents = agentSnapshotStore.GetAll();
         var news = await GetNewsWithinDisplayBudgetAsync(newsTask, cancellationToken);
 
@@ -88,6 +89,53 @@ public sealed class DashboardService(
             agents,
             BuildNotifications(system, services, agents),
             commandStore.GetRecentAuditEvents(8));
+    }
+
+    private async Task<IReadOnlyList<ServiceCard>> GetServicesSafelyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await serviceStatusProvider.GetServicesAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Service status collection failed; returning the dashboard without service results");
+            return [];
+        }
+    }
+
+    private async Task<IReadOnlyList<NewsItem>> GetNewsSafelyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await newsProvider.GetNewsAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "News collection failed; returning the dashboard without news");
+            return [];
+        }
+    }
+
+    private SystemStats GetSystemStatsSafely()
+    {
+        try
+        {
+            return systemStatsProvider.GetStats();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "System statistics collection failed; returning an empty local snapshot");
+            return new SystemStats(Environment.MachineName, 0, 0, [], DateTimeOffset.UtcNow);
+        }
     }
 
     private static async Task<IReadOnlyList<NewsItem>> GetNewsWithinDisplayBudgetAsync(
@@ -1109,6 +1157,7 @@ public sealed class RssNewsProvider(
             : options.Value.NewsFeeds;
 
         return feeds
+            .Where(feed => feed?.Url is { IsAbsoluteUri: true })
             .GroupBy(feed => feed.Url.AbsoluteUri, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();

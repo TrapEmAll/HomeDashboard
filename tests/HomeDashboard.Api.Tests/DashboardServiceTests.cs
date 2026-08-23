@@ -1,5 +1,6 @@
 using HomeDashboard.Api;
 using HomeDashboard.Contracts;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -20,7 +21,8 @@ public sealed class DashboardServiceTests
             new NewsProvider(),
             store,
             store,
-            Options.Create(new DashboardOptions { DefaultAgentId = "server-pc" }));
+            Options.Create(new DashboardOptions { DefaultAgentId = "server-pc" }),
+            NullLogger<DashboardService>.Instance);
 
         var snapshot = await dashboard.GetSnapshotAsync(CancellationToken.None);
 
@@ -28,6 +30,27 @@ public sealed class DashboardServiceTests
         var alert = Assert.Single(snapshot.Notifications);
         Assert.Equal("Plex is Offline", alert.Title);
         Assert.Equal("Windows service stopped.", alert.Message);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_returns_partial_dashboard_when_optional_providers_fail()
+    {
+        var store = new EmptyStore();
+        var dashboard = new DashboardService(
+            new ThrowingServiceProvider(),
+            new ThrowingSystemProvider(),
+            new ThrowingNewsProvider(),
+            store,
+            store,
+            Options.Create(new DashboardOptions()),
+            NullLogger<DashboardService>.Instance);
+
+        var snapshot = await dashboard.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Empty(snapshot.Services);
+        Assert.Empty(snapshot.News);
+        Assert.Empty(snapshot.System.Disks);
+        Assert.Equal(Environment.MachineName, snapshot.System.Hostname);
     }
 
     private static ServiceCard Card(ServiceStatus status, string message)
@@ -50,12 +73,43 @@ public sealed class DashboardServiceTests
             => Task.FromResult<IReadOnlyList<NewsItem>>([]);
     }
 
+    private sealed class ThrowingServiceProvider : IServiceStatusProvider
+    {
+        public Task<IReadOnlyList<ServiceCard>> GetServicesAsync(CancellationToken cancellationToken)
+            => Task.FromException<IReadOnlyList<ServiceCard>>(new InvalidOperationException("service failure"));
+    }
+
+    private sealed class ThrowingSystemProvider : ISystemStatsProvider
+    {
+        public SystemStats GetStats() => throw new InvalidOperationException("system failure");
+    }
+
+    private sealed class ThrowingNewsProvider : INewsProvider
+    {
+        public Task<IReadOnlyList<NewsItem>> GetNewsAsync(CancellationToken cancellationToken)
+            => Task.FromException<IReadOnlyList<NewsItem>>(new InvalidOperationException("news failure"));
+    }
+
     private sealed class SnapshotStore(AgentSnapshot snapshot) : IAgentSnapshotStore, IAgentCommandStore
     {
         public AgentSnapshot? GetLatest(string agentId) => snapshot;
         public IReadOnlyList<AgentSummary> GetAll() => [];
         public IReadOnlyList<AgentHistoryPoint> GetHistory(string agentId) => [];
         public void Save(AgentSnapshot value) => throw new NotSupportedException();
+        public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request) => throw new NotSupportedException();
+        public AgentCommand? DequeueNext(string agentId) => null;
+        public void Complete(string agentId, string commandId, AgentCommandCompletion completion) => throw new NotSupportedException();
+        public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];
+        public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count) => [];
+        public void AddAuditEvent(AuditEvent auditEvent) => throw new NotSupportedException();
+    }
+
+    private sealed class EmptyStore : IAgentSnapshotStore, IAgentCommandStore
+    {
+        public AgentSnapshot? GetLatest(string agentId) => null;
+        public IReadOnlyList<AgentSummary> GetAll() => [];
+        public IReadOnlyList<AgentHistoryPoint> GetHistory(string agentId) => [];
+        public void Save(AgentSnapshot snapshot) => throw new NotSupportedException();
         public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request) => throw new NotSupportedException();
         public AgentCommand? DequeueNext(string agentId) => null;
         public void Complete(string agentId, string commandId, AgentCommandCompletion completion) => throw new NotSupportedException();
