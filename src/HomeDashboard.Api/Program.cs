@@ -15,10 +15,8 @@ builder.Host.UseWindowsService();
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-builder.Services
-    .AddOptions<DashboardOptions>()
-    .Bind(builder.Configuration.GetSection("Dashboard"))
-    .Validate(options => options.Services.Select(service => service.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() == options.Services.Count, "Service IDs must be unique.");
+builder.Services.AddSingleton<IOptions<DashboardOptions>>(
+    Options.Create(DashboardOptionsLoader.Load(builder.Configuration.GetSection("Dashboard"))));
 
 builder.Services
     .AddOptions<DashboardSecurityOptions>()
