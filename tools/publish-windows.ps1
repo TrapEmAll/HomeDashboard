@@ -12,11 +12,18 @@ $apiProject = Join-Path $repoRoot "src/HomeDashboard.Api/HomeDashboard.Api.cspro
 $agentProject = Join-Path $repoRoot "src/HomeDashboard.Agent/HomeDashboard.Agent.csproj"
 $nugetConfig = Join-Path $repoRoot "NuGet.Config"
 $apiWwwroot = Join-Path $repoRoot "src/HomeDashboard.Api/wwwroot"
+$operationsService = Join-Path $repoRoot "src/HomeDashboard.Api/OperationsService.cs"
+$contractsFile = Join-Path $repoRoot "src/HomeDashboard.Contracts/DashboardContracts.cs"
 $outputRoot = Join-Path $repoRoot "outputs/HomeDashboard-Windows"
 $apiOutput = Join-Path $outputRoot "api"
 $agentOutput = Join-Path $outputRoot "agent"
 $toolsOutput = Join-Path $outputRoot "tools"
 $zipPath = Join-Path $repoRoot "outputs/HomeDashboard-Windows.zip"
+
+if ((Test-Path $operationsService) -and
+    (-not (Test-Path $contractsFile) -or -not (Select-String -LiteralPath $contractsFile -SimpleMatch "record OperationsSnapshot" -Quiet))) {
+    throw "The source tree contains OperationsService.cs without its shared contracts. Run tools\update-homedashboard.ps1 again to repair the mixed source update."
+}
 
 Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue

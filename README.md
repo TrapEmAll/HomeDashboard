@@ -128,6 +128,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\build-api.ps1
 
 If this reports that no compatible SDK is installed, install the .NET 8 SDK or a newer SDK and rerun the command. The complete Windows package additionally requires Node.js for the React production build.
 
+If publishing reports missing types such as `OperationsSnapshot`, the source folder contains files from different revisions. Refresh the updater and repair the checkout from `main` with this elevated PowerShell command from the HomeDashboard source folder:
+
+```powershell
+Invoke-WebRequest "https://raw.githubusercontent.com/TrapEmAll/HomeDashboard/main/tools/update-homedashboard.ps1" -OutFile ".\tools\update-homedashboard.ps1"; powershell -ExecutionPolicy Bypass -File ".\tools\update-homedashboard.ps1"
+```
+
 Restart controls require browser confirmation, queue commands for `Dashboard:DefaultAgentId`, and write audit events for queued, rejected, and completed commands. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
 
 ## MVP boundaries
