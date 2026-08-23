@@ -8,6 +8,7 @@ coverage/
 node_modules/
 dist/
 outputs/
+backups/
 src/HomeDashboard.Api/wwwroot/
 .env
 .env.*

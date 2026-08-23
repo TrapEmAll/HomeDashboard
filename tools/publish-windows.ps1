@@ -36,11 +36,54 @@ function Remove-ProjectBuildArtifacts {
     }
 }
 
+function Copy-PublishPathExact {
+    param(
+        [string]$Path,
+        [string]$Destination
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $item = Get-Item -LiteralPath $Path
+    if (-not $item.PSIsContainer) {
+        New-Item -ItemType Directory -Path (Split-Path $Destination) -Force | Out-Null
+        Copy-Item -LiteralPath $item.FullName -Destination $Destination -Force
+        return
+    }
+
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $sourcePath = $item.FullName.TrimEnd('\')
+    $sourcePrefixLength = $sourcePath.Length + 1
+    Get-ChildItem -LiteralPath $sourcePath -Recurse -File | ForEach-Object {
+        $relativePath = $_.FullName.Substring($sourcePrefixLength)
+        $destinationFile = Join-Path $Destination $relativePath
+        New-Item -ItemType Directory -Path (Split-Path $destinationFile) -Force | Out-Null
+        Copy-Item -LiteralPath $_.FullName -Destination $destinationFile -Force
+    }
+}
+
 if ((Test-Path $operationsService) -and
     (-not (Test-Path $contractsFile) -or -not (Select-String -LiteralPath $contractsFile -SimpleMatch "record OperationsSnapshot" -Quiet))) {
     throw "The source tree contains OperationsService.cs without its shared contracts. Run tools\update-homedashboard.ps1 again to repair the mixed source update."
 }
 
+$publishBackupRoot = Join-Path $repoRoot "backups/HomeDashboard-publish-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+$publishStatePaths = @(
+    (Join-Path $apiOutput "appsettings.Local.json"),
+    (Join-Path $apiOutput "data"),
+    (Join-Path $agentOutput "appsettings.Local.json")
+)
+$hasPublishState = $null -ne ($publishStatePaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+if ($hasPublishState) {
+    Write-Host "Backing up packaged user state to $publishBackupRoot..."
+    Copy-PublishPathExact (Join-Path $apiOutput "appsettings.Local.json") (Join-Path $publishBackupRoot "api/appsettings.Local.json")
+    Copy-PublishPathExact (Join-Path $apiOutput "data") (Join-Path $publishBackupRoot "api/data")
+    Copy-PublishPathExact (Join-Path $agentOutput "appsettings.Local.json") (Join-Path $publishBackupRoot "agent/appsettings.Local.json")
+}
+
+try {
 Write-Host "Cleaning stale .NET build artifacts..."
 Remove-ProjectBuildArtifacts $repoRoot
 Remove-Item $outputRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -94,3 +137,12 @@ Copy-Item (Join-Path $repoRoot "README.md") $outputRoot
 
 Compress-Archive -Path (Join-Path $outputRoot "*") -DestinationPath $zipPath -Force
 Write-Host "Created $zipPath"
+}
+finally {
+    if ($hasPublishState) {
+        Copy-PublishPathExact (Join-Path $publishBackupRoot "api/appsettings.Local.json") (Join-Path $apiOutput "appsettings.Local.json")
+        Copy-PublishPathExact (Join-Path $publishBackupRoot "api/data") (Join-Path $apiOutput "data")
+        Copy-PublishPathExact (Join-Path $publishBackupRoot "agent/appsettings.Local.json") (Join-Path $agentOutput "appsettings.Local.json")
+        Write-Host "Packaged user state restored. Backup retained at $publishBackupRoot."
+    }
+}
