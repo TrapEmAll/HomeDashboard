@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using HomeDashboard.Contracts;
 using Microsoft.Extensions.Options;
 
@@ -9,7 +10,8 @@ public sealed class SetupService(
     IOptions<DashboardOptions> dashboardOptions,
     IOptions<DashboardSecurityOptions> securityOptions,
     IAgentCommandStore auditStore,
-    ILocalSettingsWriter settingsWriter) : ISetupService
+    ILocalSettingsWriter settingsWriter,
+    IAgentLocalSettingsWriter? agentSettingsWriter = null) : ISetupService
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -42,12 +44,15 @@ public sealed class SetupService(
             throw new InvalidOperationException("Dashboard password is required.");
         }
 
+        var dashboardApiKey = UseOrGenerate(request.DashboardApiKey);
+        var agentApiKey = UseOrGenerate(request.AgentApiKey);
+        var defaultAgentId = string.IsNullOrWhiteSpace(request.DefaultAgentId) ? "server-pc" : request.DefaultAgentId.Trim();
         var settings = new
         {
             Security = new
             {
-                DashboardApiKey = UseOrGenerate(request.DashboardApiKey),
-                AgentApiKey = UseOrGenerate(request.AgentApiKey),
+                DashboardApiKey = dashboardApiKey,
+                AgentApiKey = agentApiKey,
                 DashboardPassword = "",
                 DashboardPasswordHash = ApiKeyValidator.HashSecret(request.DashboardPassword),
                 securityOptions.Value.SessionCookieName,
@@ -55,7 +60,7 @@ public sealed class SetupService(
             },
             Dashboard = new
             {
-                DefaultAgentId = string.IsNullOrWhiteSpace(request.DefaultAgentId) ? "server-pc" : request.DefaultAgentId,
+                DefaultAgentId = defaultAgentId,
                 dashboardOptions.Value.DataPath,
                 dashboardOptions.Value.AgentHistoryLimit,
                 dashboardOptions.Value.IncludeRecommendedFeeds,
@@ -65,6 +70,10 @@ public sealed class SetupService(
         };
 
         await settingsWriter.WriteAsync(JsonSerializer.Serialize(settings, SerializerOptions), cancellationToken);
+        if (agentSettingsWriter is not null)
+        {
+            await agentSettingsWriter.WriteAsync(defaultAgentId, agentApiKey, cancellationToken);
+        }
 
         auditStore.AddAuditEvent(new AuditEvent(
             Guid.NewGuid().ToString("n"),
@@ -162,6 +171,10 @@ public sealed class SetupService(
         };
 
         await settingsWriter.WriteAsync(JsonSerializer.Serialize(settings, SerializerOptions), cancellationToken);
+        if (agentSettingsWriter is not null && !string.IsNullOrWhiteSpace(security.AgentApiKey))
+        {
+            await agentSettingsWriter.WriteAsync(request.DefaultAgentId.Trim(), security.AgentApiKey, cancellationToken);
+        }
         auditStore.AddAuditEvent(new AuditEvent(
             Guid.NewGuid().ToString("n"),
             AuditEventType.SetupSaved,
@@ -292,6 +305,47 @@ public sealed class LocalSettingsWriter : ILocalSettingsWriter
                 File.Delete(temporaryPath);
             }
 
+            gate.Release();
+        }
+    }
+}
+
+public interface IAgentLocalSettingsWriter
+{
+    Task WriteAsync(string agentId, string apiKey, CancellationToken cancellationToken);
+}
+
+public sealed class AgentLocalSettingsWriter : IAgentLocalSettingsWriter
+{
+    private readonly SemaphoreSlim gate = new(1, 1);
+    private static readonly JsonSerializerOptions AgentSerializerOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    public async Task WriteAsync(string agentId, string apiKey, CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        var agentDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "agent"));
+        var path = Path.Combine(agentDirectory, "appsettings.Local.json");
+        var temporaryPath = $"{path}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            Directory.CreateDirectory(agentDirectory);
+            var root = File.Exists(path)
+                ? JsonNode.Parse(await File.ReadAllTextAsync(path, cancellationToken)) as JsonObject ?? new JsonObject()
+                : new JsonObject();
+            var agent = root["Agent"] as JsonObject ?? new JsonObject();
+            root["Agent"] = agent;
+            agent["AgentId"] = agentId;
+            agent["ApiKey"] = apiKey;
+            agent["DashboardApiUrl"] ??= "http://localhost:5000";
+            await File.WriteAllTextAsync(temporaryPath, root.ToJsonString(AgentSerializerOptions), cancellationToken);
+            File.Move(temporaryPath, path, true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
             gate.Release();
         }
     }

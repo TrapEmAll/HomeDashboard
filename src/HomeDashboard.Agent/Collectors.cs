@@ -15,12 +15,12 @@ public interface IAgentCollector
 }
 
 public sealed class AgentCollector(
-    IOptions<AgentOptions> options,
+    IOptionsMonitor<AgentOptions> options,
     ISystemSnapshotCollector systemCollector,
     IWindowsServiceSnapshotCollector serviceCollector) : IAgentCollector
 {
     public AgentSnapshot Collect()
-        => new(options.Value.AgentId, DateTimeOffset.UtcNow, systemCollector.Collect(), serviceCollector.Collect());
+        => new(options.CurrentValue.AgentId, DateTimeOffset.UtcNow, systemCollector.Collect(), serviceCollector.Collect());
 }
 
 public interface ISystemSnapshotCollector
@@ -114,9 +114,16 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
             return false;
         }
 
-        using var windowsUpdate = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
-        using var sessionManager = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager");
-        return windowsUpdate is not null || sessionManager?.GetValue("PendingFileRenameOperations") is not null;
+        try
+        {
+            using var windowsUpdate = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
+            using var sessionManager = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Session Manager");
+            return windowsUpdate is not null || sessionManager?.GetValue("PendingFileRenameOperations") is not null;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return false;
+        }
     }
 
     [SupportedOSPlatform("windows")]
@@ -131,7 +138,7 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
         {
             return Math.Round(Math.Clamp(cpuCounter.NextValue(), 0, 100), 1);
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
         {
             return null;
         }
@@ -190,7 +197,7 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
             counter.NextValue();
             return counter;
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
         {
             return null;
         }
@@ -219,18 +226,18 @@ public interface IWindowsServiceSnapshotCollector
     IReadOnlyList<ServiceCard> Collect();
 }
 
-public sealed class WindowsServiceSnapshotCollector(IOptions<AgentOptions> options) : IWindowsServiceSnapshotCollector
+public sealed class WindowsServiceSnapshotCollector(IOptionsMonitor<AgentOptions> options) : IWindowsServiceSnapshotCollector
 {
     public IReadOnlyList<ServiceCard> Collect()
     {
         if (!OperatingSystem.IsWindows())
         {
-            return options.Value.WindowsServices
+            return options.CurrentValue.WindowsServices
                 .Select(service => ToUnavailableCard(service, "Windows service monitoring is only available on Windows."))
                 .ToArray();
         }
 
-        return CollectWindowsServices(options.Value.WindowsServices);
+        return CollectWindowsServices(options.CurrentValue.WindowsServices);
     }
 
     [SupportedOSPlatform("windows")]

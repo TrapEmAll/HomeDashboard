@@ -43,7 +43,7 @@ if ($Api) {
 }
 
 if ($Agent) {
-    & (Join-Path $packagedTools "install-agent-service.ps1")
+    & (Join-Path $packagedTools "install-agent-service.ps1") -Port $Port
 }
 
 Write-Host "HomeDashboard install steps completed."

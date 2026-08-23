@@ -83,6 +83,25 @@ public sealed class SetupServiceTests
         Assert.Contains("unique", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Saving_setup_synchronizes_generated_agent_credentials()
+    {
+        var writer = new InMemorySettingsWriter();
+        var agentWriter = new InMemoryAgentSettingsWriter();
+        var setup = new SetupService(
+            Options.Create(new DashboardOptions()),
+            Options.Create(new DashboardSecurityOptions()),
+            new InMemoryAgentCommandStore(),
+            writer,
+            agentWriter);
+
+        await setup.SaveAsync(new SetupRequest("password", null, null, "server-pc", [], []), CancellationToken.None);
+
+        Assert.Equal("server-pc", agentWriter.AgentId);
+        Assert.False(string.IsNullOrWhiteSpace(agentWriter.ApiKey));
+        Assert.Contains(agentWriter.ApiKey, writer.Json);
+    }
+
     private static SetupService CreateSetup(out InMemorySettingsWriter writer)
     {
         writer = new InMemorySettingsWriter();
@@ -122,6 +141,19 @@ public sealed class SetupServiceTests
         public Task WriteAsync(string json, CancellationToken cancellationToken)
         {
             Json = json;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class InMemoryAgentSettingsWriter : IAgentLocalSettingsWriter
+    {
+        public string? AgentId { get; private set; }
+        public string? ApiKey { get; private set; }
+
+        public Task WriteAsync(string agentId, string apiKey, CancellationToken cancellationToken)
+        {
+            AgentId = agentId;
+            ApiKey = apiKey;
             return Task.CompletedTask;
         }
     }
