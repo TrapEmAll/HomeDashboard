@@ -93,7 +93,7 @@ public sealed class SetupService(
                 service.HealthUrl?.ToString(),
                 !string.IsNullOrWhiteSpace(service.ApiKey),
                 service.RestartEnabled)).ToArray(),
-            dashboard.NewsFeeds.Select(feed => new NewsFeedSetting(
+            dashboard.NewsFeeds.Where(feed => feed?.Url is not null).Select(feed => new NewsFeedSetting(
                 feed.Name,
                 feed.Url.ToString(),
                 feed.Kind,
