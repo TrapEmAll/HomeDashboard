@@ -73,6 +73,29 @@ public sealed class RssNewsProviderTests
     }
 
     [Fact]
+    public void ParseFeed_reads_podcast_audio_artwork_and_duration()
+    {
+        const string xml = """
+            <rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+              <channel><item>
+                <title>Network tuning</title>
+                <link>https://example.test/episode</link>
+                <enclosure url="https://cdn.example.test/episode.mp3" type="audio/mpeg" />
+                <itunes:image href="https://cdn.example.test/artwork.jpg" />
+                <itunes:duration>42:15</itunes:duration>
+              </item></channel>
+            </rss>
+            """;
+
+        var item = Assert.Single(RssNewsProvider.ParseFeed(
+            "Example Show", XDocument.Parse(xml), HomeDashboard.Contracts.NewsContentKind.Podcast, "Technology", null));
+
+        Assert.Equal("https://cdn.example.test/episode.mp3", item.MediaUrl?.ToString());
+        Assert.Equal("https://cdn.example.test/artwork.jpg", item.ImageUrl?.ToString());
+        Assert.Equal("42:15", item.Duration);
+    }
+
+    [Fact]
     public void Recommended_catalog_has_unique_article_and_podcast_feeds()
     {
         Assert.True(RecommendedFeedCatalog.All.Count >= 20);

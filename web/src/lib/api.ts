@@ -1,6 +1,8 @@
 import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
+let dashboardRequest: Promise<DashboardSnapshot> | null = null;
+let operationsRequest: Promise<OperationsSnapshot> | null = null;
 
 export class ApiError extends Error {
   public constructor(public readonly status: number, message: string) {
@@ -65,13 +67,15 @@ export async function saveSetup(request: SetupRequest): Promise<SetupStatus> {
   return readJson<SetupStatus>(response);
 }
 
-export async function getDashboard(): Promise<DashboardSnapshot> {
-  const response = await fetch(`${apiBaseUrl}/api/dashboard`, { credentials: "include" });
-  if (!response.ok) {
-    throw new ApiError(response.status, `Dashboard request failed with ${response.status}`);
-  }
-
-  return normalizeDashboard(await response.json());
+export function getDashboard(): Promise<DashboardSnapshot> {
+  if (dashboardRequest) return dashboardRequest;
+  dashboardRequest = fetch(`${apiBaseUrl}/api/dashboard`, { credentials: "include" })
+    .then(async (response) => {
+      if (!response.ok) throw new ApiError(response.status, `Dashboard request failed with ${response.status}`);
+      return normalizeDashboard(await response.json());
+    })
+    .finally(() => { dashboardRequest = null; });
+  return dashboardRequest;
 }
 
 export async function getDashboardSettings(): Promise<DashboardSettings> {
@@ -131,9 +135,12 @@ export async function requestRestart(serviceId: string): Promise<void> {
   }
 }
 
-export async function getOperations(): Promise<OperationsSnapshot> {
-  const response = await fetch(`${apiBaseUrl}/api/operations`, { credentials: "include" });
-  return readJson<OperationsSnapshot>(response);
+export function getOperations(): Promise<OperationsSnapshot> {
+  if (operationsRequest) return operationsRequest;
+  operationsRequest = fetch(`${apiBaseUrl}/api/operations`, { credentials: "include" })
+    .then((response) => readJson<OperationsSnapshot>(response))
+    .finally(() => { operationsRequest = null; });
+  return operationsRequest;
 }
 
 export async function controlDownload(source: string, itemId: string, action: DownloadControlAction, deleteData = false): Promise<void> {
@@ -328,7 +335,10 @@ function normalizeNewsItem(raw: unknown): NewsItem {
     summary: asOptionalString(read(value, "summary", "Summary")),
     kind: normalizeNewsKind(read(value, "kind", "Kind")),
     category: asString(read(value, "category", "Category"), "Technology"),
-    providerUrl: asOptionalString(read(value, "providerUrl", "ProviderUrl"))
+    providerUrl: asOptionalString(read(value, "providerUrl", "ProviderUrl")),
+    mediaUrl: asOptionalString(read(value, "mediaUrl", "MediaUrl")),
+    imageUrl: asOptionalString(read(value, "imageUrl", "ImageUrl")),
+    duration: asOptionalString(read(value, "duration", "Duration"))
   };
 }
 

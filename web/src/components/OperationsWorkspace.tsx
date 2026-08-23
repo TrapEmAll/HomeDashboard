@@ -56,8 +56,10 @@ export function OperationsWorkspace({ authenticated }: Props) {
   useEffect(() => {
     if (!authenticated) return;
     void load();
-    const refresh = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(refresh);
+    const refresh = window.setInterval(() => { if (!document.hidden && navigator.onLine) void load(); }, 60_000);
+    const handleVisibility = () => { if (!document.hidden && navigator.onLine) void load(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => { window.clearInterval(refresh); document.removeEventListener("visibilitychange", handleVisibility); };
   }, [authenticated]);
 
   useEffect(() => {

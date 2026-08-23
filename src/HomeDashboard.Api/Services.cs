@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
@@ -72,7 +74,36 @@ public sealed class DashboardService(
     IOptions<DashboardOptions> options,
     ILogger<DashboardService> logger) : IDashboardService
 {
+    private readonly SemaphoreSlim snapshotLock = new(1, 1);
+    private DashboardSnapshot? cachedSnapshot;
+    private DateTimeOffset snapshotExpiresAt = DateTimeOffset.MinValue;
+
     public async Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (cachedSnapshot is not null && DateTimeOffset.UtcNow < snapshotExpiresAt)
+        {
+            return cachedSnapshot;
+        }
+
+        await snapshotLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (cachedSnapshot is not null && DateTimeOffset.UtcNow < snapshotExpiresAt)
+            {
+                return cachedSnapshot;
+            }
+
+            cachedSnapshot = await BuildSnapshotAsync(cancellationToken);
+            snapshotExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5);
+            return cachedSnapshot;
+        }
+        finally
+        {
+            snapshotLock.Release();
+        }
+    }
+
+    private async Task<DashboardSnapshot> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
         var servicesTask = GetServicesSafelyAsync(cancellationToken);
         var newsTask = GetNewsSafelyAsync(cancellationToken);
@@ -1188,7 +1219,8 @@ public sealed class RssNewsProvider(
     ILogger<RssNewsProvider> logger) : INewsProvider
 {
     private readonly SemaphoreSlim refreshLock = new(1, 1);
-    private readonly SemaphoreSlim feedConcurrency = new(6, 6);
+    private readonly SemaphoreSlim feedConcurrency = new(4, 4);
+    private readonly ConcurrentDictionary<string, FeedCacheEntry> feedCache = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<NewsItem> cachedItems = [];
     private DateTimeOffset cacheExpiresAt = DateTimeOffset.MinValue;
 
@@ -1250,19 +1282,43 @@ public sealed class RssNewsProvider(
         await feedConcurrency.WaitAsync(cancellationToken);
         try
         {
-            await using var stream = await client.GetStreamAsync(feed.Url, cancellationToken);
+            var cacheKey = feed.Url.AbsoluteUri;
+            feedCache.TryGetValue(cacheKey, out var previous);
+            using var request = new HttpRequestMessage(HttpMethod.Get, feed.Url);
+            if (!string.IsNullOrWhiteSpace(previous?.ETag)
+                && EntityTagHeaderValue.TryParse(previous.ETag, out var entityTag))
+            {
+                request.Headers.IfNoneMatch.Add(entityTag);
+            }
+            if (previous?.LastModified is not null)
+            {
+                request.Headers.IfModifiedSince = previous.LastModified;
+            }
+
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotModified && previous is not null)
+            {
+                return previous.Items;
+            }
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
-            return ParseFeed(feed.Name, document, feed.Kind, feed.Category, feed.ProviderUrl)
+            var items = ParseFeed(feed.Name, document, feed.Kind, feed.Category, feed.ProviderUrl)
                 .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
-                .Take(feed.Kind == NewsContentKind.Podcast ? 3 : 4)
+                .Take(feed.Kind == NewsContentKind.Podcast ? 6 : 8)
                 .ToArray();
+            feedCache[cacheKey] = new FeedCacheEntry(
+                items,
+                response.Headers.ETag?.ToString(),
+                response.Content.Headers.LastModified);
+            return items;
         }
         catch (Exception ex) when (
             ex is HttpRequestException or System.Xml.XmlException
             || ex is TaskCanceledException && !cancellationToken.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Failed to read news feed {FeedName}", feed.Name);
-            return [];
+            return feedCache.TryGetValue(feed.Url.AbsoluteUri, out var stale) ? stale.Items : [];
         }
         finally
         {
@@ -1280,26 +1336,46 @@ public sealed class RssNewsProvider(
         string category,
         Uri? providerUrl)
     {
-        var rssItems = document.Descendants("item").Select(item => new NewsItem(
-            source,
-            Read(item, "title") ?? "Untitled",
-            TryUri(Read(item, "link")),
-            TryDate(Read(item, "pubDate")),
-            Read(item, "description"),
-            kind,
-            category,
-            providerUrl));
+        var rssItems = document.Descendants("item").Select(item =>
+        {
+            var enclosure = item.Elements().FirstOrDefault(element => element.Name.LocalName == "enclosure");
+            var mediaUrl = enclosure?.Attribute("type")?.Value.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true
+                ? TryUri(enclosure.Attribute("url")?.Value)
+                : null;
+            var imageUrl = TryUri(item.Elements().FirstOrDefault(element =>
+                    element.Name.LocalName is "image" or "thumbnail")?.Attribute("href")?.Value
+                ?? item.Elements().FirstOrDefault(element => element.Name.LocalName == "thumbnail")?.Attribute("url")?.Value);
+            return new NewsItem(
+                source,
+                Read(item, "title") ?? "Untitled",
+                TryUri(Read(item, "link")),
+                TryDate(Read(item, "pubDate")),
+                Read(item, "description"),
+                kind,
+                category,
+                providerUrl,
+                mediaUrl,
+                imageUrl,
+                ReadLocal(item, "duration"));
+        });
 
         XNamespace atom = "http://www.w3.org/2005/Atom";
-        var atomItems = document.Descendants(atom + "entry").Select(entry => new NewsItem(
-            source,
-            Read(entry, atom + "title") ?? "Untitled",
-            TryUri(entry.Elements(atom + "link").FirstOrDefault()?.Attribute("href")?.Value),
-            TryDate(Read(entry, atom + "updated") ?? Read(entry, atom + "published")),
-            Read(entry, atom + "summary"),
-            kind,
-            category,
-            providerUrl));
+        var atomItems = document.Descendants(atom + "entry").Select(entry =>
+        {
+            var links = entry.Elements(atom + "link").ToArray();
+            return new NewsItem(
+                source,
+                Read(entry, atom + "title") ?? "Untitled",
+                TryUri(links.FirstOrDefault(link => link.Attribute("rel")?.Value != "enclosure")?.Attribute("href")?.Value),
+                TryDate(Read(entry, atom + "updated") ?? Read(entry, atom + "published")),
+                Read(entry, atom + "summary"),
+                kind,
+                category,
+                providerUrl,
+                TryUri(links.FirstOrDefault(link => link.Attribute("rel")?.Value == "enclosure" && link.Attribute("type")?.Value.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true)?.Attribute("href")?.Value),
+                TryUri(entry.Elements().FirstOrDefault(element => element.Name.LocalName is "thumbnail" or "image")?.Attribute("url")?.Value),
+                ReadLocal(entry, "duration"));
+        });
 
         return rssItems.Concat(atomItems).ToArray();
     }
@@ -1307,11 +1383,19 @@ public sealed class RssNewsProvider(
     private static string? Read(XElement element, XName name)
         => element.Element(name)?.Value.Trim();
 
+    private static string? ReadLocal(XElement element, string localName)
+        => element.Elements().FirstOrDefault(child => child.Name.LocalName.Equals(localName, StringComparison.OrdinalIgnoreCase))?.Value.Trim();
+
     private static Uri? TryUri(string? value)
         => Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri : null;
 
     private static DateTimeOffset? TryDate(string? value)
         => DateTimeOffset.TryParse(value, out var date) ? date : null;
+
+    private sealed record FeedCacheEntry(
+        IReadOnlyList<NewsItem> Items,
+        string? ETag,
+        DateTimeOffset? LastModified);
 }
 
 public sealed class RestartCoordinator(

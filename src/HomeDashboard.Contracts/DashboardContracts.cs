@@ -104,7 +104,10 @@ public sealed record NewsItem(
     string? Summary,
     NewsContentKind Kind = NewsContentKind.Article,
     string Category = "Technology",
-    Uri? ProviderUrl = null);
+    Uri? ProviderUrl = null,
+    Uri? MediaUrl = null,
+    Uri? ImageUrl = null,
+    string? Duration = null);
 
 public enum NewsContentKind
 {
