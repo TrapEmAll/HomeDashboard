@@ -13,11 +13,11 @@ public interface IAgentPublisher
 
 public sealed class AgentPublisher(
     IHttpClientFactory httpClientFactory,
-    IOptions<AgentOptions> options) : IAgentPublisher
+    IOptionsMonitor<AgentOptions> options) : IAgentPublisher
 {
     public async Task PublishAsync(AgentSnapshot snapshot, CancellationToken cancellationToken)
     {
-        var apiKey = options.Value.ApiKey;
+        var apiKey = options.CurrentValue.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("Agent:ApiKey must be configured before the agent can connect.");
@@ -37,7 +37,7 @@ public sealed class AgentPublisher(
     public async Task<AgentCommand?> GetNextCommandAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("dashboard-api");
-        using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/agent/{options.Value.AgentId}/commands/next");
+        using var request = CreateAuthenticatedRequest(HttpMethod.Get, $"/api/agent/{options.CurrentValue.AgentId}/commands/next");
         using var response = await client.SendAsync(request, cancellationToken);
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
         {
@@ -51,7 +51,7 @@ public sealed class AgentPublisher(
     public async Task CompleteCommandAsync(AgentCommand command, AgentCommandCompletion completion, CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("dashboard-api");
-        using var request = CreateAuthenticatedRequest(HttpMethod.Post, $"/api/agent/{options.Value.AgentId}/commands/{command.Id}/complete");
+        using var request = CreateAuthenticatedRequest(HttpMethod.Post, $"/api/agent/{options.CurrentValue.AgentId}/commands/{command.Id}/complete");
         request.Content = JsonContent.Create(completion);
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -59,7 +59,7 @@ public sealed class AgentPublisher(
 
     private HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
     {
-        var apiKey = options.Value.ApiKey;
+        var apiKey = options.CurrentValue.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("Agent:ApiKey must be configured before the agent can connect.");

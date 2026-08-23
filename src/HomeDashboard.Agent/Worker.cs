@@ -8,7 +8,7 @@ public sealed class Worker(
     IAgentCollector collector,
     IAgentPublisher publisher,
     IAgentCommandExecutor commandExecutor,
-    IOptions<AgentOptions> options,
+    IOptionsMonitor<AgentOptions> options,
     ILogger<Worker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -45,7 +45,7 @@ public sealed class Worker(
                 logger.LogWarning(ex, "Failed to process agent command.");
             }
 
-            await Task.Delay(options.Value.PollInterval, stoppingToken);
+            await Task.Delay(options.CurrentValue.PollInterval, stoppingToken);
         }
     }
 }

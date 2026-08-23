@@ -54,6 +54,7 @@ builder.Services.AddSingleton<INewsProvider, RssNewsProvider>();
 builder.Services.AddSingleton<IRestartCoordinator, RestartCoordinator>();
 builder.Services.AddSingleton<ISetupService, SetupService>();
 builder.Services.AddSingleton<ILocalSettingsWriter, LocalSettingsWriter>();
+builder.Services.AddSingleton<IAgentLocalSettingsWriter, AgentLocalSettingsWriter>();
 builder.Services.AddSingleton<IOpmlImportService, OpmlImportService>();
 builder.Services.AddSingleton<IOperationsService, OperationsService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();

@@ -10,7 +10,7 @@ public interface IAgentCommandExecutor
     AgentCommandCompletion Execute(AgentCommand command);
 }
 
-public sealed class AgentCommandExecutor(IOptions<AgentOptions> options) : IAgentCommandExecutor
+public sealed class AgentCommandExecutor(IOptionsMonitor<AgentOptions> options) : IAgentCommandExecutor
 {
     public AgentCommandCompletion Execute(AgentCommand command)
     {
@@ -19,7 +19,7 @@ public sealed class AgentCommandExecutor(IOptions<AgentOptions> options) : IAgen
             return new AgentCommandCompletion(false, $"Unsupported command kind {command.Kind}.");
         }
 
-        var configured = options.Value.WindowsServices.FirstOrDefault(service =>
+        var configured = options.CurrentValue.WindowsServices.FirstOrDefault(service =>
             service.Id.Equals(command.ServiceId, StringComparison.OrdinalIgnoreCase));
         if (configured is null)
         {

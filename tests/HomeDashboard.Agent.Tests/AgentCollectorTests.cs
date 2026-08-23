@@ -11,7 +11,7 @@ public sealed class AgentCollectorTests
     public void Collect_combines_system_and_service_snapshots()
     {
         var collector = new AgentCollector(
-            Options.Create(new AgentOptions { AgentId = "server-pc" }),
+            new StaticOptionsMonitor<AgentOptions>(new AgentOptions { AgentId = "server-pc" }),
             new StubSystemCollector(),
             new StubServiceCollector());
 
@@ -33,5 +33,12 @@ public sealed class AgentCollectorTests
     {
         public IReadOnlyList<ServiceCard> Collect()
             => [new("plex", "Plex", ServiceKind.Plex, "Media server", null, ServiceStatus.Online, false, DateTimeOffset.UtcNow, null, [])];
+    }
+
+    private sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue => value;
+        public T Get(string? name) => value;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
     }
 }

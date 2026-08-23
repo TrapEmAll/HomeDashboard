@@ -1,4 +1,5 @@
 using HomeDashboard.Agent;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,8 @@ var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     Args = args,
     ContentRootPath = AppContext.BaseDirectory
 });
+
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 builder.Services.AddWindowsService(options => options.ServiceName = "HomeDashboard Agent");
 builder.Logging.ClearProviders();
@@ -19,7 +22,7 @@ builder.Services
 
 builder.Services.AddHttpClient("dashboard-api", (services, client) =>
 {
-    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentOptions>>().Value;
+    var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<AgentOptions>>().CurrentValue;
     client.BaseAddress = options.DashboardApiUrl;
     client.Timeout = TimeSpan.FromSeconds(10);
 });

@@ -9,6 +9,16 @@ namespace HomeDashboard.Api.Tests;
 public sealed class DashboardServiceTests
 {
     [Fact]
+    public void Local_system_provider_includes_extended_host_telemetry()
+    {
+        var stats = new LocalSystemStatsProvider().GetStats();
+
+        Assert.True(stats.UptimeSeconds > 0);
+        Assert.False(string.IsNullOrWhiteSpace(stats.OsVersion));
+        Assert.NotNull(stats.TopProcesses);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_builds_alerts_from_merged_agent_services()
     {
         var system = new SystemStats("server", 20, 30, [], DateTimeOffset.UtcNow);
@@ -51,6 +61,27 @@ public sealed class DashboardServiceTests
         Assert.Empty(snapshot.News);
         Assert.Empty(snapshot.System.Disks);
         Assert.Equal(Environment.MachineName, snapshot.System.Hostname);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_uses_local_telemetry_when_agent_snapshot_is_stale()
+    {
+        var staleSystem = new SystemStats("stale-agent", 1, 2, [], DateTimeOffset.UtcNow.AddMinutes(-5));
+        var localSystem = new SystemStats("api-host", 42, 55, [], DateTimeOffset.UtcNow, 3600);
+        var store = new SnapshotStore(new AgentSnapshot("server-pc", DateTimeOffset.UtcNow.AddMinutes(-5), staleSystem, []));
+        var dashboard = new DashboardService(
+            new ServiceProvider(Card(ServiceStatus.Online, "Online")),
+            new SystemProvider(localSystem),
+            new NewsProvider(),
+            store,
+            store,
+            Options.Create(new DashboardOptions { DefaultAgentId = "server-pc" }),
+            NullLogger<DashboardService>.Instance);
+
+        var snapshot = await dashboard.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Equal("api-host", snapshot.System.Hostname);
+        Assert.Equal(3600, snapshot.System.UptimeSeconds);
     }
 
     private static ServiceCard Card(ServiceStatus status, string message)

@@ -211,6 +211,10 @@ VITE_API_BASE_URL=https://your-dashboard-api
 
 The API uses `Dashboard:DefaultAgentId` to decide which agent snapshot should drive dashboard system stats and where restart commands should be queued. A restart command requires browser confirmation and only runs when both the API service card and the agent service entry have `RestartEnabled: true`.
 
+Saving first-run setup synchronizes the generated agent key and default agent ID into the packaged agent's `appsettings.Local.json`. The Windows installer repeats this synchronization during installs and updates while preserving other agent settings. The agent watches this local file for changes, so credential corrections do not require republishing the executable.
+
+Fresh agent snapshots supply CPU, memory, disks, uptime, operating system, reboot state, network rates, and top-process telemetry. If the selected agent has not reported for two minutes, the dashboard marks it stale and uses telemetry collected by the API host instead of displaying an old snapshot indefinitely.
+
 ## Alerts, audit, and live updates
 
 The dashboard includes active alerts for offline/degraded services, stale agents, and disks above 90% usage. Restart queue/rejection/completion records appear in the audit panel and are also available from `GET /api/audit`.
