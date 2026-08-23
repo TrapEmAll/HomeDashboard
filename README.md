@@ -105,6 +105,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\open-elevated-update.ps1
 
 After signing in, open **Dashboard settings** from the gear button to add, edit, or remove service cards and custom RSS/podcast feeds. You can also choose the default agent, enable the built-in intelligence catalog, store integration API keys, and opt services into restart controls. Saved API keys are masked; leave the field blank to keep an existing key. Restart the API service after saving to apply the new configuration.
 
+In **Dashboard settings > Custom feeds**, use **Choose OPML** to import subscriptions exported by Feedly, Inoreader, FreshRSS, Thunderbird, and other RSS readers. OPML folders become feed categories, podcast folders are recognized automatically, and duplicate or invalid feed URLs are skipped. Review the imported rows and select **Save changes** to persist them.
+
 The settings editor supports Plex, Sonarr, Radarr, Lidarr, Readarr, Prowlarr, Bazarr, qBittorrent, SABnzbd, Jellyfin, game servers, file shares, and generic HTTP checks. Advanced installation and security values remain available in `appsettings.Local.json`; see [docs/configuration.md](docs/configuration.md).
 
 Keyboard controls are available while you are not typing in a field: `/` focuses service search, `R` refreshes, `S` opens settings, and `Escape` closes settings.

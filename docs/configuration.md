@@ -105,6 +105,8 @@ Browser users sign in through `/auth/login` with `Security:DashboardPassword` or
 
 After first-run setup, authenticated users can open the gear menu to manage the default agent, service cards, integration keys, restart-control flags, and custom RSS or podcast feeds. The editor never returns stored API keys to the browser. A blank key preserves the saved value; **Clear saved key** explicitly removes it. Changes are written atomically to `appsettings.Local.json`, preserve dashboard and agent credentials plus session settings, and take effect after the API service restarts.
 
+The **Custom feeds** tab accepts standard OPML 1.0 and 2.0 subscription exports up to 2 MB. Feed outlines with HTTP or HTTPS `xmlUrl` values are imported; `title` or `text` supplies the feed name, `htmlUrl` supplies the provider page, and nested folder names become categories. Repeated URLs, invalid URLs, DTDs, and external entities are rejected or skipped. Imports remain an unsaved preview until **Save changes** is selected.
+
 Use machine names or LAN addresses that are reachable from the PC running the API. `localhost` always means the API PC, not the computer viewing the dashboard in a browser.
 
 Dashboard automation can still call dashboard endpoints with `X-HomeDashboard-Key: Security:DashboardApiKey`. Agent write/poll endpoints use `Security:AgentApiKey`.

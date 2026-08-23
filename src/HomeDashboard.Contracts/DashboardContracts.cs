@@ -259,3 +259,11 @@ public sealed record UpdateServiceSetting(
     string? ApiKey,
     bool ClearApiKey,
     bool RestartEnabled);
+
+public sealed record OpmlImportRequest(
+    string Content);
+
+public sealed record OpmlImportPreview(
+    IReadOnlyList<NewsFeedSetting> Feeds,
+    int FeedOutlineCount,
+    int SkippedCount);

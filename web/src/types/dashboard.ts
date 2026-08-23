@@ -189,3 +189,9 @@ export interface UpdateServiceSetting {
   clearApiKey: boolean;
   restartEnabled: boolean;
 }
+
+export interface OpmlImportPreview {
+  feeds: NewsFeedSetting[];
+  feedOutlineCount: number;
+  skippedCount: number;
+}
