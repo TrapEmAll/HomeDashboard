@@ -214,6 +214,24 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordPrefixMediaRequestOffersChoicesForAmbiguousTitles()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service, new AmbiguousArrMediaRequestService());
+
+        var response = await processor.ProcessAsync("media add Dune", "Alex", CancellationToken.None);
+        var choices = await processor.SearchMediaChoicesAsync("Dune", CancellationToken.None);
+        var submitted = await processor.AddSelectedMediaAsync("movie:radarr:693134", "Alex", CancellationToken.None);
+        var saved = Assert.Single((await service.GetSnapshotAsync(CancellationToken.None)).MediaRequests);
+
+        Assert.StartsWith(DiscordCommandProcessor.AmbiguousMediaMessage, response);
+        Assert.Equal(2, choices.Count);
+        Assert.Contains(choices, choice => choice.Title == "Dune: Part Two (2024)" && choice.Subtitle!.Contains("tt15239678"));
+        Assert.Contains("added", submitted);
+        Assert.Equal("Dune: Part Two (2024)", saved.Title);
+    }
+
+    [Fact]
     public void DiscordSlashCommandCatalogBuildsGuidedCommandTree()
     {
         var command = DiscordSlashCommandCatalog.Build();
@@ -337,5 +355,19 @@ public sealed class CommandCenterServiceTests : IDisposable
             SearchNow = searchNow;
             return Task.FromResult(new ArrMediaRequestResult(true, "Dune: Part Two (2024) was added and a search was started in Radarr.", result, "Submitted"));
         }
+    }
+
+    private sealed class AmbiguousArrMediaRequestService : IArrMediaRequestService
+    {
+        private readonly ArrMediaLookupResult movie = new("movie:radarr:693134", "Dune: Part Two", 2024, "Movie", "Radarr",
+            "tt15239678", 693134, null, null, null);
+        private readonly ArrMediaLookupResult series = new("series:sonarr:366668", "Dune: Prophecy", 2024, "TV", "Sonarr",
+            "tt10466872", null, 366668, null, null);
+
+        public Task<IReadOnlyList<ArrMediaLookupResult>> SearchAsync(string query, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ArrMediaLookupResult>>([movie, series]);
+
+        public Task<ArrMediaRequestResult> RequestAsync(string selectionId, bool searchNow, CancellationToken cancellationToken) =>
+            Task.FromResult(new ArrMediaRequestResult(true, "Dune: Part Two (2024) was added and a search was started in Radarr.", movie, "Submitted"));
     }
 }
