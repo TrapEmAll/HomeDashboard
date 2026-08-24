@@ -10,6 +10,8 @@ public sealed class DashboardOptions
     public string DefaultAgentId { get; init; } = "server-pc";
     public string DataPath { get; init; } = "data/homedashboard-state.json";
     public int AgentHistoryLimit { get; init; } = 120;
+    public string? NetworkProbeTarget { get; init; }
+    public int NetworkProbeIntervalSeconds { get; init; } = 30;
 }
 
 public sealed class ServiceDefinition

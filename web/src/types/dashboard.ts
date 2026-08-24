@@ -23,6 +23,7 @@ export interface DashboardSnapshot {
   agents: AgentSummary[];
   notifications: DashboardNotification[];
   recentAuditEvents: AuditEvent[];
+  apiSystem?: SystemStats | null;
 }
 
 export interface AgentSummary {
@@ -73,6 +74,36 @@ export interface SystemStats {
   networkReceiveBytesPerSecond?: number;
   networkSendBytesPerSecond?: number;
   topProcesses?: ProcessStats[] | null;
+  networkInterfaces?: NetworkInterfaceStats[] | null;
+  networkProbe?: NetworkProbeStats | null;
+}
+
+export interface NetworkInterfaceStats {
+  id: string;
+  name: string;
+  description: string;
+  interfaceType: string;
+  address?: string | null;
+  linkSpeedBitsPerSecond: number;
+  receiveBytesPerSecond: number;
+  sendBytesPerSecond: number;
+  receivePacketsPerSecond: number;
+  sendPacketsPerSecond: number;
+  incomingErrors: number;
+  outgoingErrors: number;
+  incomingDiscards: number;
+  outgoingDiscards: number;
+}
+
+export interface NetworkProbeStats {
+  target: string;
+  packetLossPercent: number;
+  averageLatencyMilliseconds?: number | null;
+  minimumLatencyMilliseconds?: number | null;
+  maximumLatencyMilliseconds?: number | null;
+  sent: number;
+  received: number;
+  sampledAt: string;
 }
 
 export interface ProcessStats {

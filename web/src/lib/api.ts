@@ -295,7 +295,8 @@ function normalizeDashboard(raw: unknown): DashboardSnapshot {
       };
     }),
     notifications: asArray<DashboardNotification>(read(value, "notifications", "Notifications"), normalizeNotification),
-    recentAuditEvents: asArray<AuditEvent>(read(value, "recentAuditEvents", "RecentAuditEvents"), normalizeAuditEvent)
+    recentAuditEvents: asArray<AuditEvent>(read(value, "recentAuditEvents", "RecentAuditEvents"), normalizeAuditEvent),
+    apiSystem: normalizeOptionalSystem(read(value, "apiSystem", "ApiSystem"))
   };
 }
 
@@ -386,6 +387,26 @@ function normalizeSystem(raw: unknown): SystemStats {
     pendingReboot: Boolean(read(value, "pendingReboot", "PendingReboot")),
     networkReceiveBytesPerSecond: asNumber(read(value, "networkReceiveBytesPerSecond", "NetworkReceiveBytesPerSecond"), 0),
     networkSendBytesPerSecond: asNumber(read(value, "networkSendBytesPerSecond", "NetworkSendBytesPerSecond"), 0),
+    networkInterfaces: asArray(read(value, "networkInterfaces", "NetworkInterfaces"), (networkInterface) => {
+      const item = asRecord(networkInterface);
+      return {
+        id: asString(read(item, "id", "Id"), "network-interface"),
+        name: asString(read(item, "name", "Name"), "Network interface"),
+        description: asString(read(item, "description", "Description"), ""),
+        interfaceType: asString(read(item, "interfaceType", "InterfaceType"), "Unknown"),
+        address: asOptionalString(read(item, "address", "Address")),
+        linkSpeedBitsPerSecond: asNumber(read(item, "linkSpeedBitsPerSecond", "LinkSpeedBitsPerSecond"), 0),
+        receiveBytesPerSecond: asNumber(read(item, "receiveBytesPerSecond", "ReceiveBytesPerSecond"), 0),
+        sendBytesPerSecond: asNumber(read(item, "sendBytesPerSecond", "SendBytesPerSecond"), 0),
+        receivePacketsPerSecond: asNumber(read(item, "receivePacketsPerSecond", "ReceivePacketsPerSecond"), 0),
+        sendPacketsPerSecond: asNumber(read(item, "sendPacketsPerSecond", "SendPacketsPerSecond"), 0),
+        incomingErrors: asNumber(read(item, "incomingErrors", "IncomingErrors"), 0),
+        outgoingErrors: asNumber(read(item, "outgoingErrors", "OutgoingErrors"), 0),
+        incomingDiscards: asNumber(read(item, "incomingDiscards", "IncomingDiscards"), 0),
+        outgoingDiscards: asNumber(read(item, "outgoingDiscards", "OutgoingDiscards"), 0)
+      };
+    }),
+    networkProbe: normalizeNetworkProbe(read(value, "networkProbe", "NetworkProbe")),
     topProcesses: asArray(read(value, "topProcesses", "TopProcesses"), (process) => {
       const item = asRecord(process);
       return {
@@ -395,6 +416,25 @@ function normalizeSystem(raw: unknown): SystemStats {
         cpuTime: asString(read(item, "cpuTime", "CpuTime"), "00:00:00")
       };
     })
+  };
+}
+
+function normalizeOptionalSystem(raw: unknown): SystemStats | null {
+  return raw === null || raw === undefined ? null : normalizeSystem(raw);
+}
+
+function normalizeNetworkProbe(raw: unknown): SystemStats["networkProbe"] {
+  if (raw === null || raw === undefined) return null;
+  const value = asRecord(raw);
+  return {
+    target: asString(read(value, "target", "Target"), "gateway"),
+    packetLossPercent: asNumber(read(value, "packetLossPercent", "PacketLossPercent"), 0),
+    averageLatencyMilliseconds: asOptionalNumber(read(value, "averageLatencyMilliseconds", "AverageLatencyMilliseconds")),
+    minimumLatencyMilliseconds: asOptionalNumber(read(value, "minimumLatencyMilliseconds", "MinimumLatencyMilliseconds")),
+    maximumLatencyMilliseconds: asOptionalNumber(read(value, "maximumLatencyMilliseconds", "MaximumLatencyMilliseconds")),
+    sent: asNumber(read(value, "sent", "Sent"), 0),
+    received: asNumber(read(value, "received", "Received"), 0),
+    sampledAt: asString(read(value, "sampledAt", "SampledAt"), new Date().toISOString())
   };
 }
 
@@ -491,6 +531,10 @@ function asOptionalString(value: unknown): string | null {
 
 function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function asOptionalNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function newId(): string {

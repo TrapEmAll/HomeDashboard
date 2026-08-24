@@ -7,7 +7,8 @@ public sealed record DashboardSnapshot(
     IReadOnlyList<NewsItem> News,
     IReadOnlyList<AgentSummary> Agents,
     IReadOnlyList<DashboardNotification> Notifications,
-    IReadOnlyList<AuditEvent> RecentAuditEvents);
+    IReadOnlyList<AuditEvent> RecentAuditEvents,
+    SystemStats? ApiSystem = null);
 
 public sealed record AgentSnapshot(
     string AgentId,
@@ -83,7 +84,35 @@ public sealed record SystemStats(
     bool PendingReboot = false,
     long NetworkReceiveBytesPerSecond = 0,
     long NetworkSendBytesPerSecond = 0,
-    IReadOnlyList<ProcessStats>? TopProcesses = null);
+    IReadOnlyList<ProcessStats>? TopProcesses = null,
+    IReadOnlyList<NetworkInterfaceStats>? NetworkInterfaces = null,
+    NetworkProbeStats? NetworkProbe = null);
+
+public sealed record NetworkInterfaceStats(
+    string Id,
+    string Name,
+    string Description,
+    string InterfaceType,
+    string? Address,
+    long LinkSpeedBitsPerSecond,
+    long ReceiveBytesPerSecond,
+    long SendBytesPerSecond,
+    double ReceivePacketsPerSecond,
+    double SendPacketsPerSecond,
+    long IncomingErrors,
+    long OutgoingErrors,
+    long IncomingDiscards,
+    long OutgoingDiscards);
+
+public sealed record NetworkProbeStats(
+    string Target,
+    double PacketLossPercent,
+    double? AverageLatencyMilliseconds,
+    double? MinimumLatencyMilliseconds,
+    double? MaximumLatencyMilliseconds,
+    int Sent,
+    int Received,
+    DateTimeOffset SampledAt);
 
 public sealed record ProcessStats(
     int ProcessId,

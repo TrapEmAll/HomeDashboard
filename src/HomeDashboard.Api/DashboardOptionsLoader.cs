@@ -30,6 +30,8 @@ public static class DashboardOptionsLoader
             DefaultAgentId = ReadString(section, "DefaultAgentId", "server-pc"),
             DataPath = ReadString(section, "DataPath", "data/homedashboard-state.json"),
             AgentHistoryLimit = ReadPositiveInt(section, "AgentHistoryLimit", 120),
+            NetworkProbeTarget = string.IsNullOrWhiteSpace(section["NetworkProbeTarget"]) ? null : section["NetworkProbeTarget"]!.Trim(),
+            NetworkProbeIntervalSeconds = ReadPositiveInt(section, "NetworkProbeIntervalSeconds", 30),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds
