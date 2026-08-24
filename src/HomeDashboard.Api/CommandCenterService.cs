@@ -142,7 +142,9 @@ public sealed class CommandCenterService : ICommandCenterService
                 case "media":
                     Replace(state.MediaRequests, new MediaRequestItem(id, request.Title.Trim(), fields.GetValueOrDefault("mediaType") ?? "Media",
                         fields.GetValueOrDefault("status") ?? "Requested", fields.GetValueOrDefault("requestedBy") ?? "dashboard", DateTimeOffset.UtcNow,
-                        ParseUri(fields.GetValueOrDefault("artworkUrl"))), item => item.Id);
+                        ParseUri(fields.GetValueOrDefault("artworkUrl")), EmptyToNull(fields.GetValueOrDefault("imdbId")),
+                        ParseNullableInt(fields.GetValueOrDefault("tmdbId")), ParseNullableInt(fields.GetValueOrDefault("tvdbId")),
+                        EmptyToNull(fields.GetValueOrDefault("source"))), item => item.Id);
                     break;
                 case "automation":
                     Replace(state.Automations, new AutomationRule(id, request.Title.Trim(), fields.GetValueOrDefault("trigger") ?? "manual",
@@ -816,6 +818,8 @@ public sealed class CommandCenterService : ICommandCenterService
     private static T ParseEnum<T>(string? value, T fallback) where T : struct => Enum.TryParse<T>(value, true, out var result) ? result : fallback;
     private static bool ParseBool(string? value, bool fallback = false) => bool.TryParse(value, out var result) ? result : fallback;
     private static int ParseInt(string? value, int fallback) => int.TryParse(value, out var result) ? result : fallback;
+    private static int? ParseNullableInt(string? value) => int.TryParse(value, out var result) ? result : null;
+    private static string? EmptyToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string[] Split(string? value) => string.IsNullOrWhiteSpace(value) ? [] : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static string[] SplitRoots(string? value) => string.IsNullOrWhiteSpace(value) ? [] : value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Path.GetFullPath).ToArray();
     private static IReadOnlySet<ulong> ParseIds(string? value) => string.IsNullOrWhiteSpace(value)

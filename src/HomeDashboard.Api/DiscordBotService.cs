@@ -220,7 +220,8 @@ public sealed class DiscordBotService(
         {
             var path = ReadOptionPath(interaction.Data.Options, interaction.Data.Current.Name);
             var query = interaction.Data.Current.Value?.ToString() ?? "";
-            var results = processor.Autocomplete(path.Area, query)
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(2400));
+            var results = (await processor.AutocompleteAsync(path.Area, interaction.Data.Current.Name, query, timeout.Token))
                 .Take(25).Select(item => new AutocompleteResult(LimitChoice(item.Title, item.Subtitle), item.Id));
             await interaction.RespondAsync(results);
         }
@@ -251,6 +252,7 @@ public sealed class DiscordBotService(
                 "shopping_item" => "shopping",
                 "event" => "calendar",
                 "alert" => "inbox",
+                "media_title" => "media",
                 _ => currentName
             };
         return (area,
@@ -297,7 +299,7 @@ public sealed class DiscordBotService(
 
 public sealed record DiscordCommandChoice(string Id, string Title, string? Subtitle = null);
 
-public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
+public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter, IArrMediaRequestService? arrMedia = null)
 {
     public async Task<string> ProcessAsync(string command, string actor, CancellationToken cancellationToken)
     {
@@ -337,7 +339,8 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
             ("calendar", "add") => string.Join(" | ", Get("title"), Get("when"), Get("location")),
             ("note", "add") => string.Join(" | ", Get("title"), Get("body")),
             ("package", "add") => string.Join(" | ", Get("description"), Get("carrier", "Carrier"), Get("tracking"), Get("eta")),
-            ("media", "add") => string.Join(" | ", Get("title"), Get("type", "Media")),
+            ("media", "search") => Get("query"),
+            ("media", "add") => string.Join(" | ", Get("media_title", Get("title")), Get("search_now", "true")),
             ("system", "search") => Get("query"),
             ("system", "mode") => Get("mode", "Home"),
             ("inbox", "snooze") => string.Join(" | ", Item(), Get("minutes", "60")),
@@ -372,6 +375,19 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
         return choices.Take(25).ToArray();
     }
 
+    public async Task<IReadOnlyList<DiscordCommandChoice>> AutocompleteAsync(string area, string optionName, string query,
+        CancellationToken cancellationToken)
+    {
+        if (area.Equals("media", StringComparison.OrdinalIgnoreCase) && optionName.Equals("media_title", StringComparison.OrdinalIgnoreCase))
+        {
+            if (arrMedia is null || query.Trim().Length < 2) return [];
+            var results = await arrMedia.SearchAsync(query, cancellationToken);
+            return results.Select(item => new DiscordCommandChoice(item.SelectionId, $"{item.Title}{Year(item.Year)}",
+                $"{item.MediaType} · {item.Source}{(item.ImdbId is null ? "" : $" · {item.ImdbId}")}" )).Take(25).ToArray();
+        }
+        return Autocomplete(area, query);
+    }
+
     private async Task<string> ProcessCoreAsync(string area, string action, string value, string actor, CancellationToken cancellationToken)
     {
         return (area, action) switch
@@ -393,7 +409,8 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
             ("package" or "delivery", "add") => AddPackage(value),
             ("package" or "delivery", "list") => await ListAsync("package", cancellationToken),
             ("package" or "delivery", "remove") => Remove("package", "Package", value),
-            ("media" or "request", "add") => AddMedia(value, actor),
+            ("media" or "request", "search") => await SearchMediaAsync(value, cancellationToken),
+            ("media" or "request", "add") => await AddMediaAsync(value, actor, cancellationToken),
             ("media" or "request", "list") => await ListAsync("media", cancellationToken),
             ("media" or "request", "remove") => Remove("media", "Media", value),
             ("inbox" or "alert" or "alerts", "list") => await ListAsync("inbox", cancellationToken),
@@ -466,16 +483,48 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
         return $"Package tracked: {fields[0]}.";
     }
 
-    private string AddMedia(string value, string actor)
+    private async Task<string> SearchMediaAsync(string value, CancellationToken cancellationToken)
     {
+        if (arrMedia is null) return "Sonarr/Radarr media search is unavailable.";
+        var results = await arrMedia.SearchAsync(value, cancellationToken);
+        if (results.Count == 0) return "No matching Sonarr or Radarr releases were found. Check that the service URL and API key are configured.";
+        return "**Sonarr/Radarr matches**\n" + string.Join("\n", results.Take(10).Select(item =>
+            $"- **{item.Title}{Year(item.Year)}** - {item.MediaType} · {item.Source}{(item.ImdbId is null ? "" : $" · `{item.ImdbId}`")}"));
+    }
+
+    private async Task<string> AddMediaAsync(string value, string actor, CancellationToken cancellationToken)
+    {
+        if (arrMedia is null) return "Sonarr/Radarr media requests are unavailable.";
         var fields = Fields(value);
-        commandCenter.Upsert(new CommandCenterItemRequest("media", null, fields[0], Fields: new Dictionary<string, string>
+        var selection = fields[0];
+        var searchNow = !bool.TryParse(fields.ElementAtOrDefault(1), out var parsed) || parsed;
+        if (!selection.StartsWith("movie:", StringComparison.Ordinal) && !selection.StartsWith("series:", StringComparison.Ordinal))
         {
-            ["mediaType"] = fields.ElementAtOrDefault(1) ?? "Media",
+            var matches = await arrMedia.SearchAsync(selection, cancellationToken);
+            var normalized = selection.Replace("imdb:", "", StringComparison.OrdinalIgnoreCase).Trim();
+            var exact = matches.Where(item => item.Title.Equals(selection, StringComparison.OrdinalIgnoreCase)
+                || item.ImdbId?.Equals(normalized, StringComparison.OrdinalIgnoreCase) == true).ToArray();
+            if (exact.Length == 1) selection = exact[0].SelectionId;
+            else if (matches.Count == 1) selection = matches[0].SelectionId;
+            else return matches.Count == 0 ? "No matching Sonarr or Radarr release was found."
+                : "Several releases match that text. Use `/home media add` and select the correct title, year, and IMDb ID from autocomplete.";
+        }
+
+        var result = await arrMedia.RequestAsync(selection, searchNow, cancellationToken);
+        if (!result.Succeeded || result.Media is null) return result.Message;
+        var media = result.Media;
+        commandCenter.Upsert(new CommandCenterItemRequest("media", null, $"{media.Title}{Year(media.Year)}", Fields: new Dictionary<string, string>
+        {
+            ["mediaType"] = media.MediaType,
             ["requestedBy"] = actor,
-            ["status"] = "Requested"
+            ["status"] = result.Status,
+            ["artworkUrl"] = media.ArtworkUrl ?? "",
+            ["imdbId"] = media.ImdbId ?? "",
+            ["tmdbId"] = media.TmdbId?.ToString() ?? "",
+            ["tvdbId"] = media.TvdbId?.ToString() ?? "",
+            ["source"] = media.Source
         }));
-        return $"Media request added: {fields[0]}.";
+        return result.Message;
     }
 
     private async Task<string> CompleteAsync(string kind, string tool, string query, CancellationToken cancellationToken)
@@ -603,6 +652,7 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
         || status.Equals("running", StringComparison.OrdinalIgnoreCase) || status.Equals("connected", StringComparison.OrdinalIgnoreCase);
     private static string Suffix(string? value) => string.IsNullOrWhiteSpace(value) ? "" : $" - {value}";
     private static string Short(string value, int length) => value.Length <= length ? value : value[..(length - 3)] + "...";
+    private static string Year(int? year) => year is null ? "" : $" ({year})";
     private static string[] Fields(string value) => value.Split('|', StringSplitOptions.TrimEntries);
     private static DateTimeOffset? ParseDate(string? value) => DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
     private static string Help() => "**HomeDashboard Discord commands**\nUse `/home` for guided commands and autocomplete. Prefix commands also work:\n"
@@ -614,7 +664,7 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter)
         + "`!hd agenda add Dentist | 2026-09-03 14:00 | Downtown`\n"
         + "`!hd note add Project idea | Details`\n"
         + "`!hd package add Keyboard | UPS | 1Z... | 2026-09-04`\n"
-        + "`!hd media add Dune Part Two | Movie`\n"
+        + "`!hd media search Dune` · use `/home media add` to select and submit a verified release\n"
         + "`!hd inbox list|ack|snooze ...`\n"
         + "`!hd reminder add Title | Details` · `!hd automations list|run ...`\n"
         + "`!hd device list|control Entity | toggle | true`\n"
