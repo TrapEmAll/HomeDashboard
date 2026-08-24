@@ -68,7 +68,7 @@ Default commands use the `!hd` prefix:
 !hd agenda add Dentist | 2026-09-03 14:00 | Downtown
 !hd note add Project idea | Details
 !hd package add Keyboard | UPS | 1Z... | 2026-09-04
-!hd media add Dune Part Two | Movie
+!hd media search Dune Part Two
 !hd inbox list
 !hd reminder add Check UPS | Replace battery this weekend
 !hd automations list
@@ -82,6 +82,8 @@ Default commands use the `!hd` prefix:
 ```
 
 Dates are interpreted in the API computer's local culture and time zone. The command prefix can be changed in the Discord connector.
+
+For verified media requests, configure the Sonarr and Radarr service URLs and API keys in HomeDashboard, plus at least one root folder and quality profile in each application. `/home media search` queries both catalogs. `/home media add` provides live title autocomplete with year, media type, source application, and IMDb ID, then adds the selected release directly to Sonarr or Radarr. The prefix command searches too, but requires an exact title or IMDb ID when multiple releases match.
 
 ## Windows controls
 

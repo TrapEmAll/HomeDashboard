@@ -188,6 +188,32 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordMediaAutocompleteSubmitsAndRecordsCanonicalRelease()
+    {
+        var service = CreateService();
+        var media = new FakeArrMediaRequestService();
+        var processor = new DiscordCommandProcessor(service, media);
+
+        var choices = await processor.AutocompleteAsync("media", "media_title", "Dune", CancellationToken.None);
+        var response = await processor.ProcessStructuredAsync("media", "add", new Dictionary<string, string>
+        {
+            ["media_title"] = choices.Single().Id,
+            ["search_now"] = "true"
+        }, "Alex", CancellationToken.None);
+        var saved = Assert.Single((await service.GetSnapshotAsync(CancellationToken.None)).MediaRequests);
+
+        Assert.Contains("Dune: Part Two", choices.Single().Title);
+        Assert.Contains("tt15239678", choices.Single().Subtitle);
+        Assert.Contains("added", response);
+        Assert.True(media.SearchNow);
+        Assert.Equal("Dune: Part Two (2024)", saved.Title);
+        Assert.Equal("tt15239678", saved.ImdbId);
+        Assert.Equal(693134, saved.TmdbId);
+        Assert.Equal("Radarr", saved.Source);
+        Assert.Equal("Submitted", saved.Status);
+    }
+
+    [Fact]
     public void DiscordSlashCommandCatalogBuildsGuidedCommandTree()
     {
         var command = DiscordSlashCommandCatalog.Build();
@@ -294,5 +320,22 @@ public sealed class CommandCenterServiceTests : IDisposable
         public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];
         public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count) => [];
         public void AddAuditEvent(AuditEvent auditEvent) { }
+    }
+
+    private sealed class FakeArrMediaRequestService : IArrMediaRequestService
+    {
+        private readonly ArrMediaLookupResult result = new("movie:radarr:693134", "Dune: Part Two", 2024, "Movie", "Radarr",
+            "tt15239678", 693134, null, "Paul continues his journey.", "https://example.test/dune.jpg");
+
+        public bool SearchNow { get; private set; }
+
+        public Task<IReadOnlyList<ArrMediaLookupResult>> SearchAsync(string query, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ArrMediaLookupResult>>([result]);
+
+        public Task<ArrMediaRequestResult> RequestAsync(string selectionId, bool searchNow, CancellationToken cancellationToken)
+        {
+            SearchNow = searchNow;
+            return Task.FromResult(new ArrMediaRequestResult(true, "Dune: Part Two (2024) was added and a search was started in Radarr.", result, "Submitted"));
+        }
     }
 }

@@ -75,6 +75,7 @@ builder.Services.AddSingleton<ILocalSettingsWriter, LocalSettingsWriter>();
 builder.Services.AddSingleton<IAgentLocalSettingsWriter, AgentLocalSettingsWriter>();
 builder.Services.AddSingleton<IOpmlImportService, OpmlImportService>();
 builder.Services.AddSingleton<IOperationsService, OperationsService>();
+builder.Services.AddSingleton<IArrMediaRequestService, ArrMediaRequestService>();
 builder.Services.AddSingleton<ICommandCenterService, CommandCenterService>();
 builder.Services.AddSingleton<DiscordCommandProcessor>();
 builder.Services.AddHostedService<DiscordBotService>();

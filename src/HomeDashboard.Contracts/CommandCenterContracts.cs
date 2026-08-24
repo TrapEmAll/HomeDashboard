@@ -109,7 +109,11 @@ public sealed record MediaRequestItem(
     string Status,
     string RequestedBy,
     DateTimeOffset RequestedAt,
-    Uri? ArtworkUrl = null);
+    Uri? ArtworkUrl = null,
+    string? ImdbId = null,
+    int? TmdbId = null,
+    int? TvdbId = null,
+    string? Source = null);
 
 public sealed record CommandCenterNotification(
     string Id,

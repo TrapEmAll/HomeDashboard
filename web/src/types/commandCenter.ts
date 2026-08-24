@@ -7,7 +7,7 @@ export interface CalendarEntry { id: string; title: string; startsAt: string; en
 export interface QuickNote { id: string; title: string; body: string; tags: string[]; pinned: boolean; updatedAt: string; }
 export interface ShoppingItem { id: string; name: string; list: string; quantity: number; completed: boolean; createdAt: string; }
 export interface TrackedPackage { id: string; carrier: string; trackingNumber: string; description: string; status: string; estimatedDelivery?: string | null; updatedAt: string; }
-export interface MediaRequestItem { id: string; title: string; mediaType: string; status: string; requestedBy: string; requestedAt: string; artworkUrl?: string | null; }
+export interface MediaRequestItem { id: string; title: string; mediaType: string; status: string; requestedBy: string; requestedAt: string; artworkUrl?: string | null; imdbId?: string | null; tmdbId?: number | null; tvdbId?: number | null; source?: string | null; }
 export interface NotificationAction { label: string; tool: string; target?: string | null; requiresConfirmation: boolean; }
 export interface CommandCenterNotification { id: string; severity: Severity; source: string; title: string; message: string; createdAt: string; acknowledged: boolean; snoozedUntil?: string | null; actions?: NotificationAction[] | null; }
 export interface IntegrationStatus { id: string; kind: string; name: string; enabled: boolean; connected: boolean; status: string; lastCheckedAt?: string | null; capabilities: string[]; baseUrl?: string | null; hasSecret: boolean; settings: Record<string, string>; }

@@ -5,7 +5,7 @@ namespace HomeDashboard.Api;
 internal static class DiscordSlashCommandCatalog
 {
     public const string Name = "home";
-    public const string SchemaVersion = "1";
+    public const string SchemaVersion = "2";
 
     public static SlashCommandProperties Build()
     {
@@ -35,7 +35,8 @@ internal static class DiscordSlashCommandCatalog
                 Command("list", "Show tracked deliveries"),
                 Command("remove", "Stop tracking a delivery", Existing("package", "Package"))))
             .AddOption(Group("media", "Manage media requests",
-                Command("add", "Request a movie, show, book, or game", Text("title", "Title", true), Choice("type", "Media type", "Movie", "TV", "Book", "Game", "Music", "Other")),
+                Command("search", "Search Sonarr and Radarr", Text("query", "Title, IMDb ID, TMDb ID, or TVDb ID", true)),
+                Command("add", "Add a verified Sonarr or Radarr result", Lookup("media_title", "Start typing a title or IMDb ID"), Boolean("search_now", "Start searching for the release now")),
                 Command("list", "Show recent media requests"),
                 Command("remove", "Remove a media request", Existing("media", "Media request"))))
             .AddOption(Group("inbox", "Manage dashboard alerts",
@@ -75,6 +76,8 @@ internal static class DiscordSlashCommandCatalog
         new SlashCommandOptionBuilder().WithName(name).WithDescription(description).WithType(ApplicationCommandOptionType.String).WithRequired(required).WithMaxLength(500);
 
     private static SlashCommandOptionBuilder Existing(string name, string description) => Text(name, description, true).WithAutocomplete(true);
+
+    private static SlashCommandOptionBuilder Lookup(string name, string description) => Text(name, description, true).WithAutocomplete(true);
 
     private static SlashCommandOptionBuilder Choice(string name, string description, params string[] values) => Choice(name, description, values, false);
 
