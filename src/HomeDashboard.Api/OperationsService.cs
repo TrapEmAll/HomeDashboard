@@ -13,6 +13,7 @@ public interface IOperationsService
 {
     Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
     Task<bool> ControlDownloadAsync(DownloadControlRequest request, CancellationToken cancellationToken);
+    Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken);
     IReadOnlyList<MaintenanceWindow> GetMaintenance();
     MaintenanceWindow AddMaintenance(CreateMaintenanceWindowRequest request, string actor);
     bool RemoveMaintenance(string id);
@@ -66,12 +67,14 @@ public sealed class OperationsService(
         var calendarTask = GetCalendarAsync(client, cancellationToken);
         var playbackTask = GetPlaybackAsync(client, cancellationToken);
         var downloadsTask = GetDownloadsAsync(client, cancellationToken);
-        await Task.WhenAll(servicesTask, calendarTask, playbackTask, downloadsTask);
+        var arrTask = GetArrOperationsAsync(client, cancellationToken);
+        await Task.WhenAll(servicesTask, calendarTask, playbackTask, downloadsTask, arrTask);
 
         var services = await servicesTask;
         var calendar = await calendarTask;
         var playback = await playbackTask;
         var downloads = await downloadsTask;
+        var arr = await arrTask;
         var audit = commandStore.GetRecentAuditEvents(40);
         var incidents = services
             .Where(service => service.Status is ServiceStatus.Offline or ServiceStatus.Degraded)
@@ -90,7 +93,8 @@ public sealed class OperationsService(
                 "HomeDashboard",
                 item.Type.ToString(),
                 item.Message,
-                item.Type == AuditEventType.SetupSaved ? OperationsActivityKind.Security : OperationsActivityKind.Service,
+                item.Type == AuditEventType.SetupSaved ? OperationsActivityKind.Security
+                    : item.Type == AuditEventType.MediaCommand ? OperationsActivityKind.Media : OperationsActivityKind.Service,
                 item.Succeeded ? NotificationSeverity.Info : NotificationSeverity.Warning))
             .Concat(playback.Select(item => new OperationsActivity(
                 $"playback-{item.Id}", DateTimeOffset.UtcNow, "Plex", item.Title,
@@ -125,7 +129,49 @@ public sealed class OperationsService(
                 new Uri("https://github.com/TrapEmAll/HomeDashboard"),
                 null,
                 false,
-                null));
+                null),
+            arr);
+    }
+
+    public async Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken)
+    {
+        var service = options.Value.Services.FirstOrDefault(item => item.Id.Equals(request.ServiceId, StringComparison.OrdinalIgnoreCase)
+            && item.Kind is ServiceKind.Sonarr or ServiceKind.Radarr or ServiceKind.Lidarr or ServiceKind.Readarr
+            && item.Url is not null && !string.IsNullOrWhiteSpace(item.ApiKey));
+        if (service is null) return new(false, false, "That *arr service is not configured with an API key.");
+        if (request.Action == ArrCommandAction.SearchMissing && !request.Confirmed)
+            return new(false, true, $"Search all monitored missing items in {service.Name}? This can create substantial indexer and download activity.");
+
+        var commandName = request.Action switch
+        {
+            ArrCommandAction.RefreshMonitoredDownloads => "RefreshMonitoredDownloads",
+            ArrCommandAction.SearchMissing when service.Kind == ServiceKind.Sonarr => "MissingEpisodeSearch",
+            ArrCommandAction.SearchMissing when service.Kind == ServiceKind.Radarr => "MissingMoviesSearch",
+            ArrCommandAction.SearchMissing when service.Kind == ServiceKind.Lidarr => "MissingAlbumSearch",
+            ArrCommandAction.SearchMissing when service.Kind == ServiceKind.Readarr => "MissingBookSearch",
+            _ => null
+        };
+        if (commandName is null) return new(false, false, "That command is not supported for this service.");
+
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, BuildUri(service.Url!, "/api/v3/command"));
+            message.Headers.Add("X-Api-Key", service.ApiKey);
+            message.Content = JsonContent.Create(new { name = commandName });
+            using var response = await httpClientFactory.CreateClient("operations").SendAsync(message, cancellationToken);
+            var succeeded = response.IsSuccessStatusCode;
+            var result = new ArrCommandResult(succeeded, false, succeeded ? $"{service.Name} accepted {FriendlyCommand(request.Action)}."
+                : $"{service.Name} returned HTTP {(int)response.StatusCode}.");
+            commandStore.AddAuditEvent(new AuditEvent(Guid.NewGuid().ToString("n"), AuditEventType.MediaCommand, result.Message,
+                service.Id, null, actor, DateTimeOffset.UtcNow, Succeeded: succeeded));
+            if (succeeded) snapshotExpiresAt = DateTimeOffset.MinValue;
+            return result;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            logger.LogWarning(ex, "*arr command failed for {ServiceName}", service.Name);
+            return new(false, false, $"{service.Name} could not be reached: {ex.Message}");
+        }
     }
 
     public IReadOnlyList<MaintenanceWindow> GetMaintenance()
@@ -272,6 +318,119 @@ public sealed class OperationsService(
             return [];
         }
     }
+
+    private async Task<ArrOperationsSummary> GetArrOperationsAsync(HttpClient client, CancellationToken cancellationToken)
+    {
+        var services = options.Value.Services.Where(service => service.Url is not null && !string.IsNullOrWhiteSpace(service.ApiKey)
+            && service.Kind is ServiceKind.Sonarr or ServiceKind.Radarr or ServiceKind.Lidarr or ServiceKind.Readarr or ServiceKind.Prowlarr);
+        var results = await Task.WhenAll(services.Select(service => GetArrServiceAsync(client, service, cancellationToken)));
+        return new ArrOperationsSummary(
+            results.Select(item => item.Instance).ToArray(),
+            results.SelectMany(item => item.Queue).OrderBy(item => item.ProgressPercent).Take(100).ToArray(),
+            results.SelectMany(item => item.Health).Take(100).ToArray(),
+            results.SelectMany(item => item.History).OrderByDescending(item => item.OccurredAt).Take(100).ToArray());
+    }
+
+    private async Task<ArrServiceResult> GetArrServiceAsync(HttpClient client, ServiceDefinition service, CancellationToken cancellationToken)
+    {
+        var api = service.Kind == ServiceKind.Prowlarr ? "/api/v1" : "/api/v3";
+        var systemTask = GetArrDocumentAsync(client, service, $"{api}/system/status", cancellationToken);
+        var healthTask = GetArrDocumentAsync(client, service, $"{api}/health", cancellationToken);
+        var historyTask = GetArrDocumentAsync(client, service, $"{api}/history?page=1&pageSize=20&sortKey=date&sortDirection=descending", cancellationToken);
+        var queueTask = service.Kind == ServiceKind.Prowlarr
+            ? Task.FromResult<JsonDocument?>(null)
+            : GetArrDocumentAsync(client, service, $"{api}/queue?page=1&pageSize=50&includeUnknownItems=true", cancellationToken);
+        var missingTask = service.Kind == ServiceKind.Prowlarr
+            ? Task.FromResult<JsonDocument?>(null)
+            : GetArrDocumentAsync(client, service, $"{api}/wanted/missing?page=1&pageSize=1", cancellationToken);
+        await Task.WhenAll(systemTask, healthTask, historyTask, queueTask, missingTask);
+
+        using var system = await systemTask;
+        using var healthDocument = await healthTask;
+        using var historyDocument = await historyTask;
+        using var queueDocument = await queueTask;
+        using var missingDocument = await missingTask;
+        var health = ParseArrHealth(service, healthDocument);
+        var queue = ParseArrQueue(service, queueDocument);
+        var history = ParseArrHistory(service, historyDocument);
+        var missing = missingDocument is null ? 0 : ReadJsonInt(missingDocument.RootElement, "totalRecords");
+        var version = system is null ? null : ReadJsonString(system.RootElement, "version");
+        return new ArrServiceResult(new ArrInstanceSummary(service.Id, service.Name, service.Kind, system is not null, version,
+            queue.Count, health.Count, missing), queue, health, history);
+    }
+
+    private async Task<JsonDocument?> GetArrDocumentAsync(HttpClient client, ServiceDefinition service, string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(service.Url!, path));
+            request.Headers.Add("X-Api-Key", service.ApiKey);
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            logger.LogDebug(ex, "*arr query {Path} failed for {ServiceName}", path, service.Name);
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<ArrHealthIssue> ParseArrHealth(ServiceDefinition service, JsonDocument? document)
+    {
+        if (document is null || document.RootElement.ValueKind != JsonValueKind.Array) return [];
+        return document.RootElement.EnumerateArray().Select((item, index) => new ArrHealthIssue(
+            $"{service.Id}-{ReadJsonString(item, "source") ?? index.ToString(CultureInfo.InvariantCulture)}", service.Id, service.Name,
+            ReadJsonString(item, "type") ?? "warning", ReadJsonString(item, "message") ?? "Health issue reported.")).ToArray();
+    }
+
+    private static IReadOnlyList<ArrQueueItem> ParseArrQueue(ServiceDefinition service, JsonDocument? document)
+    {
+        if (document is null || !document.RootElement.TryGetProperty("records", out var records)) return [];
+        return records.EnumerateArray().Select(item =>
+        {
+            var size = ReadJsonLong(item, "size") ?? 0;
+            var remaining = ReadJsonLong(item, "sizeleft") ?? ReadJsonLong(item, "sizeLeft") ?? size;
+            var progress = size > 0 ? Math.Clamp((double)(size - remaining) / size * 100, 0, 100) : 0;
+            return new ArrQueueItem(ReadJsonString(item, "id") ?? Guid.NewGuid().ToString("n"), service.Id, service.Name,
+                ArrTitle(item), ReadJsonString(item, "title"), ReadJsonString(item, "status") ?? "unknown",
+                ReadJsonString(item, "trackedDownloadStatus"), Math.Round(progress, 1), ReadStatusMessage(item));
+        }).ToArray();
+    }
+
+    private static IReadOnlyList<ArrHistoryItem> ParseArrHistory(ServiceDefinition service, JsonDocument? document)
+    {
+        if (document is null || !document.RootElement.TryGetProperty("records", out var records)) return [];
+        return records.EnumerateArray().Select(item =>
+        {
+            var occurred = DateTimeOffset.TryParse(ReadJsonString(item, "date"), out var date) ? date : DateTimeOffset.UtcNow;
+            var quality = item.TryGetProperty("quality", out var qualityNode) && qualityNode.TryGetProperty("quality", out var nested)
+                ? ReadJsonString(nested, "name") : null;
+            return new ArrHistoryItem(ReadJsonString(item, "id") ?? Guid.NewGuid().ToString("n"), service.Id, service.Name,
+                ArrTitle(item), ReadJsonString(item, "eventType") ?? "unknown", occurred, quality);
+        }).ToArray();
+    }
+
+    private static string ArrTitle(JsonElement item)
+    {
+        foreach (var property in new[] { "series", "movie", "artist", "book", "album", "indexer" })
+            if (item.TryGetProperty(property, out var nested) && ReadJsonString(nested, "title") is { Length: > 0 } title) return title;
+        return ReadJsonString(item, "sourceTitle") ?? ReadJsonString(item, "title") ?? "Media item";
+    }
+
+    private static string? ReadStatusMessage(JsonElement item)
+    {
+        if (!item.TryGetProperty("statusMessages", out var messages) || messages.ValueKind != JsonValueKind.Array) return null;
+        var first = messages.EnumerateArray().FirstOrDefault();
+        return first.ValueKind == JsonValueKind.Undefined ? null : ReadJsonString(first, "title") ?? ReadJsonString(first, "messages");
+    }
+
+    private static string FriendlyCommand(ArrCommandAction action) => action switch
+    {
+        ArrCommandAction.RefreshMonitoredDownloads => "a download refresh",
+        ArrCommandAction.SearchMissing => "a missing-media search",
+        _ => "the command"
+    };
 
     private async Task<IReadOnlyList<MediaCalendarItem>> GetCalendarAsync(HttpClient client, CancellationToken cancellationToken)
     {
@@ -434,6 +593,10 @@ public sealed class OperationsService(
     private static string? ReadJsonString(JsonElement item, string name) => item.TryGetProperty(name, out var value) ? value.ToString() : null;
     private static long? ReadJsonLong(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.TryGetInt64(out var parsed) ? parsed : null;
     private static double ReadJsonDouble(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.TryGetDouble(out var parsed) ? parsed : 0;
+    private static int ReadJsonInt(JsonElement item, string name) => item.TryGetProperty(name, out var value) && value.TryGetInt32(out var parsed) ? parsed : 0;
+
+    private sealed record ArrServiceResult(ArrInstanceSummary Instance, IReadOnlyList<ArrQueueItem> Queue,
+        IReadOnlyList<ArrHealthIssue> Health, IReadOnlyList<ArrHistoryItem> History);
 
     private static ConcurrentDictionary<string, MaintenanceWindow> LoadMaintenance(string path)
     {

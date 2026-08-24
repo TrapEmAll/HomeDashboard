@@ -45,7 +45,7 @@ Configured services support:
 - An optional native API key.
 - A restart-enabled flag.
 
-The API maps successful health/native responses to `Online`, 5xx responses to `Degraded`, network failures to `Offline`, and missing health URLs to `Unknown`. Native checks currently cover Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin.
+The API maps successful health/native responses to `Online`, 5xx responses to `Degraded`, network failures to `Offline`, and missing health URLs to `Unknown`. Native checks currently cover Plex, *arr apps, qBittorrent, SABnzbd, and Jellyfin. Operations performs bounded parallel *arr queries server-side, normalizes queue, history, health, and missing-media data, and caches the combined snapshot for ten seconds. Broad missing-media searches require an explicit browser confirmation and all accepted commands are audited.
 
 ## News
 

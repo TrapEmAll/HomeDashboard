@@ -1,4 +1,4 @@
-import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
+import type { AgentHistoryPoint, ArrCommandAction, ArrCommandResult, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
 import type { AssistantResponse, CommandCenterActionRequest, CommandCenterActionResult, CommandCenterItemRequest, CommandCenterSnapshot, FileWorkspaceEntry, IntegrationStatus, SearchResult, SystemLogEntry } from "../types/commandCenter";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -146,6 +146,17 @@ export function getOperations(): Promise<OperationsSnapshot> {
     .then((response) => readJson<OperationsSnapshot>(response))
     .finally(() => { operationsRequest = null; });
   return operationsRequest;
+}
+
+export async function runArrCommand(serviceId: string, action: ArrCommandAction, confirmed = false): Promise<ArrCommandResult> {
+  const response = await fetch(`${apiBaseUrl}/api/operations/arr/command`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serviceId, action, confirmed })
+  });
+  if (response.status === 409) return response.json() as Promise<ArrCommandResult>;
+  return readJson<ArrCommandResult>(response);
 }
 
 export function getCommandCenter(): Promise<CommandCenterSnapshot> {

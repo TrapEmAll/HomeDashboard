@@ -60,6 +60,8 @@ Example *arr app:
 
 If an *arr API key is omitted, HomeDashboard falls back to the configured `HealthUrl`. With an API key, *arr checks include version, OS, health issue count, and queue count when those endpoints are available.
 
+The Operations **Media** view also uses configured API keys to combine Sonarr, Radarr, Lidarr, Readarr, and Prowlarr into one control surface. It loads instance versions, health warnings, active import queues, recent history, missing-media totals, and the Sonarr/Radarr release calendar. Sonarr, Radarr, Lidarr, and Readarr expose controls to refresh monitored downloads and launch a confirmed search for all monitored missing media. API keys stay in the API configuration and are never returned to the browser.
+
 Example Plex:
 
 ```json

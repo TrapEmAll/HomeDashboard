@@ -245,6 +245,14 @@ app.MapPost("/api/downloads/control", async (DownloadControlRequest request, IOp
     => await operations.ControlDownloadAsync(request, cancellationToken)
         ? Results.Ok(new { message = $"{request.Action} request accepted." })
         : Results.BadRequest(new { error = "That download action is not available or the client rejected it." }));
+app.MapPost("/api/operations/arr/command", async (ArrCommandRequest request, IOperationsService operations,
+    IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> security, HttpContext context, CancellationToken cancellationToken) =>
+{
+    var session = sessions.Get(context.Request.Cookies[security.Value.SessionCookieName]);
+    var result = await operations.RunArrCommandAsync(request, session.DisplayName ?? session.ProfileId ?? "dashboard", cancellationToken);
+    return result.Succeeded ? Results.Ok(result) : result.RequiresConfirmation
+        ? Results.Json(result, statusCode: StatusCodes.Status409Conflict) : Results.BadRequest(new { error = result.Message });
+});
 app.MapGet("/api/discovery", async (IOperationsService operations, CancellationToken cancellationToken)
     => Results.Ok(await operations.DiscoverAsync(cancellationToken)));
 app.MapGet("/api/maintenance", (IOperationsService operations) => Results.Ok(operations.GetMaintenance()));
