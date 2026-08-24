@@ -64,6 +64,9 @@ public sealed class SetupService(
                 dashboardOptions.Value.DataPath,
                 dashboardOptions.Value.AgentHistoryLimit,
                 dashboardOptions.Value.IncludeRecommendedFeeds,
+                dashboardOptions.Value.NetworkProbeTarget,
+                dashboardOptions.Value.NetworkProbeIntervalSeconds,
+                dashboardOptions.Value.HostDetailRefreshSeconds,
                 Services = request.Services.Select(ToService).ToArray(),
                 NewsFeeds = request.NewsFeeds.Select(ToFeed).ToArray()
             }
@@ -165,6 +168,9 @@ public sealed class SetupService(
                 dashboard.DataPath,
                 dashboard.AgentHistoryLimit,
                 request.IncludeRecommendedFeeds,
+                dashboard.NetworkProbeTarget,
+                dashboard.NetworkProbeIntervalSeconds,
+                dashboard.HostDetailRefreshSeconds,
                 Services = services,
                 NewsFeeds = feeds
             }

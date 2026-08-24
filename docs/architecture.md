@@ -57,6 +57,8 @@ The agent reads configured Windows service statuses, collects disk/memory/sample
 
 The dashboard snapshot keeps agent system telemetry and API-host telemetry separate. The API host view samples per-interface byte and packet counters and publishes the last completed background latency/loss probe; network probing never blocks snapshot generation.
 
+The API uses workstation GC for the small homelab workload. Expensive host details are sampled on a slower bounded interval, command history is bounded, feed text is capped before caching, and large browser workspaces defer off-screen rendering. These choices reduce idle and refresh-time memory without reducing live CPU, memory, network, or health-check updates.
+
 Next steps:
 
 - Add host-wide CPU counters instead of process CPU sampling.

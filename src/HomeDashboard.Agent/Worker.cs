@@ -19,7 +19,7 @@ public sealed class Worker(
             try
             {
                 await publisher.PublishAsync(snapshot, stoppingToken);
-                logger.LogInformation(
+                logger.LogDebug(
                     "Published {ServiceCount} service states for {Host} at {CapturedAt}",
                     snapshot.Services.Count,
                     snapshot.System.Hostname,

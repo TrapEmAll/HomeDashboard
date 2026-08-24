@@ -11,12 +11,17 @@ public sealed class DashboardServiceTests
     [Fact]
     public void Local_system_provider_includes_extended_host_telemetry()
     {
-        var stats = new LocalSystemStatsProvider().GetStats();
+        var provider = new LocalSystemStatsProvider();
+        var stats = provider.GetStats();
 
         Assert.True(stats.UptimeSeconds > 0);
         Assert.False(string.IsNullOrWhiteSpace(stats.OsVersion));
         Assert.NotNull(stats.TopProcesses);
         Assert.NotNull(stats.NetworkInterfaces);
+
+        var next = provider.GetStats();
+        Assert.Same(stats.Disks, next.Disks);
+        Assert.Same(stats.TopProcesses, next.TopProcesses);
     }
 
     [Fact]

@@ -23,6 +23,18 @@ public sealed class AgentCollectorTests
         Assert.Equal("plex", snapshot.Services[0].Id);
     }
 
+    [Fact]
+    public void System_collector_reuses_expensive_host_details_between_poll_cycles()
+    {
+        var collector = new SystemSnapshotCollector(new StaticOptionsMonitor<AgentOptions>(new AgentOptions()));
+
+        var first = collector.Collect();
+        var second = collector.Collect();
+
+        Assert.Same(first.Disks, second.Disks);
+        Assert.Same(first.TopProcesses, second.TopProcesses);
+    }
+
     private sealed class StubSystemCollector : ISystemSnapshotCollector
     {
         public SystemStats Collect()

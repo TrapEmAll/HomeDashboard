@@ -12,6 +12,7 @@ public sealed class DashboardOptions
     public int AgentHistoryLimit { get; init; } = 120;
     public string? NetworkProbeTarget { get; init; }
     public int NetworkProbeIntervalSeconds { get; init; } = 30;
+    public int HostDetailRefreshSeconds { get; init; } = 60;
 }
 
 public sealed class ServiceDefinition

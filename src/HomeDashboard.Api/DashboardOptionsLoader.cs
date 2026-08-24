@@ -32,6 +32,7 @@ public static class DashboardOptionsLoader
             AgentHistoryLimit = ReadPositiveInt(section, "AgentHistoryLimit", 120),
             NetworkProbeTarget = string.IsNullOrWhiteSpace(section["NetworkProbeTarget"]) ? null : section["NetworkProbeTarget"]!.Trim(),
             NetworkProbeIntervalSeconds = ReadPositiveInt(section, "NetworkProbeIntervalSeconds", 30),
+            HostDetailRefreshSeconds = ReadPositiveInt(section, "HostDetailRefreshSeconds", 60),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds

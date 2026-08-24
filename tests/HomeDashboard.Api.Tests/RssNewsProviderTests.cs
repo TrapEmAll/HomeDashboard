@@ -33,6 +33,17 @@ public sealed class RssNewsProviderTests
     }
 
     [Fact]
+    public void ParseFeed_bounds_cached_text_fields()
+    {
+        var xml = $"<rss><channel><item><title>{new string('T', 400)}</title><description>{new string('D', 2000)}</description></item></channel></rss>";
+
+        var item = Assert.Single(RssNewsProvider.ParseFeed("Example", XDocument.Parse(xml)));
+
+        Assert.Equal(240, item.Title.Length);
+        Assert.Equal(1200, item.Summary!.Length);
+    }
+
+    [Fact]
     public async Task GetNewsAsync_reuses_recent_feed_results()
     {
         const string xml = "<rss><channel><item><title>Cached item</title><link>https://example.test/item</link></item></channel></rss>";

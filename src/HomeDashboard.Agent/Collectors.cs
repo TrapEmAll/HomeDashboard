@@ -28,8 +28,13 @@ public interface ISystemSnapshotCollector
     SystemStats Collect();
 }
 
-public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
+public sealed class SystemSnapshotCollector(IOptionsMonitor<AgentOptions> options) : ISystemSnapshotCollector
 {
+    private readonly object detailLock = new();
+    private IReadOnlyList<DiskStats> cachedDisks = [];
+    private IReadOnlyList<ProcessStats> cachedTopProcesses = [];
+    private bool cachedPendingReboot;
+    private DateTimeOffset detailsExpireAt = DateTimeOffset.MinValue;
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
     private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
@@ -39,25 +44,40 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
 
     public SystemStats Collect()
     {
-        var disks = DriveInfo
-            .GetDrives()
-            .Where(drive => drive.IsReady)
-            .Select(drive => new DiskStats(drive.Name, drive.TotalSize, drive.AvailableFreeSpace))
-            .ToArray();
+        var details = GetHostDetails();
 
         var network = GetNetworkRates();
         return new SystemStats(
             Environment.MachineName,
             (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
             GetMemoryUsedPercent(GetProcessMemoryPercent()),
-            disks,
+            details.Disks,
             DateTimeOffset.UtcNow,
             Environment.TickCount64 / 1000,
             Environment.OSVersion.VersionString,
-            IsPendingReboot(),
+            details.PendingReboot,
             network.Received,
             network.Sent,
-            GetTopProcesses());
+            details.TopProcesses);
+    }
+
+    private (IReadOnlyList<DiskStats> Disks, IReadOnlyList<ProcessStats> TopProcesses, bool PendingReboot) GetHostDetails()
+    {
+        lock (detailLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (now >= detailsExpireAt)
+            {
+                cachedDisks = DriveInfo.GetDrives().Where(drive => drive.IsReady)
+                    .Select(drive => new DiskStats(drive.Name, drive.TotalSize, drive.AvailableFreeSpace)).ToArray();
+                cachedTopProcesses = GetTopProcesses();
+                cachedPendingReboot = IsPendingReboot();
+                var interval = options.CurrentValue.HostDetailRefreshInterval;
+                detailsExpireAt = now.Add(interval < TimeSpan.FromSeconds(15) ? TimeSpan.FromSeconds(15) : interval);
+            }
+
+            return (cachedDisks, cachedTopProcesses, cachedPendingReboot);
+        }
     }
 
     private (long Received, long Sent) GetNetworkRates()
@@ -91,21 +111,33 @@ public sealed class SystemSnapshotCollector : ISystemSnapshotCollector
     }
 
     private static IReadOnlyList<ProcessStats> GetTopProcesses()
-        => Process.GetProcesses().Select(process =>
+    {
+        var largest = new PriorityQueue<ProcessStats, long>();
+        foreach (var process in Process.GetProcesses())
         {
             try
             {
-                return new ProcessStats(process.Id, process.ProcessName, process.WorkingSet64, process.TotalProcessorTime);
+                var workingSet = process.WorkingSet64;
+                if (largest.Count < 8 || largest.TryPeek(out _, out var smallest) && workingSet > smallest)
+                {
+                    if (largest.Count == 8)
+                    {
+                        largest.Dequeue();
+                    }
+                    largest.Enqueue(new ProcessStats(process.Id, process.ProcessName, workingSet, process.TotalProcessorTime), workingSet);
+                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
             {
-                return null;
             }
             finally
             {
                 process.Dispose();
             }
-        }).Where(item => item is not null).Cast<ProcessStats>().OrderByDescending(item => item.WorkingSetBytes).Take(8).ToArray();
+        }
+
+        return largest.UnorderedItems.Select(item => item.Element).OrderByDescending(item => item.WorkingSetBytes).ToArray();
+    }
 
     private static bool IsPendingReboot()
     {
