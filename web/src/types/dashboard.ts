@@ -225,6 +225,63 @@ export interface OperationsSnapshot {
   incidents: IncidentSummary[];
   maintenance: MaintenanceWindow[];
   update: UpdateSummary;
+  arr: ArrOperationsSummary;
+}
+
+export interface ArrOperationsSummary {
+  instances: ArrInstanceSummary[];
+  queue: ArrQueueItem[];
+  health: ArrHealthIssue[];
+  history: ArrHistoryItem[];
+}
+
+export interface ArrInstanceSummary {
+  serviceId: string;
+  name: string;
+  kind: ServiceKind;
+  connected: boolean;
+  version?: string | null;
+  queueCount: number;
+  healthIssueCount: number;
+  missingCount: number;
+}
+
+export interface ArrQueueItem {
+  id: string;
+  serviceId: string;
+  source: string;
+  title: string;
+  detail?: string | null;
+  status: string;
+  trackedStatus?: string | null;
+  progressPercent: number;
+  errorMessage?: string | null;
+}
+
+export interface ArrHealthIssue {
+  id: string;
+  serviceId: string;
+  source: string;
+  type: string;
+  message: string;
+}
+
+export interface ArrHistoryItem {
+  id: string;
+  serviceId: string;
+  source: string;
+  title: string;
+  eventType: string;
+  occurredAt: string;
+  quality?: string | null;
+}
+
+export type ArrCommandAction = "RefreshMonitoredDownloads" | "SearchMissing";
+
+export interface ArrCommandResult {
+  succeeded: boolean;
+  requiresConfirmation: boolean;
+  message: string;
 }
 
 export interface OperationsActivity {

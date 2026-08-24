@@ -4,7 +4,7 @@ HomeDashboard is a Windows-friendly personal command center and homelab dashboar
 
 The new **Command** workspace adds a daily briefing, calendar, personal tasks, notes, shopping, package tracking, media requests, a persistent priority inbox, global search, voice input, a local-assistant connector, modes, household profiles and roles, home controls, systems inventory, Windows file/log tools, Wake-on-LAN, guarded machine controls, automation rules, and a connector catalog. A private outbound Discord bot supports remote list capture without exposing another inbound port. It is installable as a PWA and has responsive phone and wall-display layouts. See [docs/command-center.md](docs/command-center.md).
 
-The service wall retains live health filtering and search, favorites, density modes, activity, health history, storage details, and session recovery. Operations covers Plex sessions, Sonarr/Radarr calendars, download queues, incidents, dependencies, maintenance, storage planning, discovery, weather, and backup/restore. Intelligence provides RSS and podcast playback, OPML import, artwork, filters, sorting, bookmarks, read/hidden state, sharing, and paging.
+The service wall retains live health filtering and search, favorites, density modes, activity, health history, storage details, and session recovery. Operations covers Plex sessions, a unified Sonarr/Radarr/Lidarr/Readarr/Prowlarr control deck, media queues and history, missing-media search, release calendars, download queues, incidents, dependencies, maintenance, storage planning, discovery, weather, and backup/restore. Intelligence provides RSS and podcast playback, OPML import, artwork, filters, sorting, bookmarks, read/hidden state, sharing, and paging.
 
 ## Repository layout
 

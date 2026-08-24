@@ -209,7 +209,8 @@ public enum AuditEventType
     RestartQueued,
     RestartCompleted,
     RestartRejected,
-    AgentSnapshotReceived
+    AgentSnapshotReceived,
+    MediaCommand
 }
 
 public sealed record SetupStatus(
@@ -301,7 +302,61 @@ public sealed record OperationsSnapshot(
     IReadOnlyList<StorageForecast> Storage,
     IReadOnlyList<IncidentSummary> Incidents,
     IReadOnlyList<MaintenanceWindow> Maintenance,
-    UpdateSummary Update);
+    UpdateSummary Update,
+    ArrOperationsSummary Arr);
+
+public sealed record ArrOperationsSummary(
+    IReadOnlyList<ArrInstanceSummary> Instances,
+    IReadOnlyList<ArrQueueItem> Queue,
+    IReadOnlyList<ArrHealthIssue> Health,
+    IReadOnlyList<ArrHistoryItem> History);
+
+public sealed record ArrInstanceSummary(
+    string ServiceId,
+    string Name,
+    ServiceKind Kind,
+    bool Connected,
+    string? Version,
+    int QueueCount,
+    int HealthIssueCount,
+    int MissingCount);
+
+public sealed record ArrQueueItem(
+    string Id,
+    string ServiceId,
+    string Source,
+    string Title,
+    string? Detail,
+    string Status,
+    string? TrackedStatus,
+    double ProgressPercent,
+    string? ErrorMessage);
+
+public sealed record ArrHealthIssue(
+    string Id,
+    string ServiceId,
+    string Source,
+    string Type,
+    string Message);
+
+public sealed record ArrHistoryItem(
+    string Id,
+    string ServiceId,
+    string Source,
+    string Title,
+    string EventType,
+    DateTimeOffset OccurredAt,
+    string? Quality);
+
+public sealed record ArrCommandRequest(string ServiceId, ArrCommandAction Action, bool Confirmed = false);
+
+public enum ArrCommandAction
+{
+    RefreshMonitoredDownloads,
+    SearchMissing
+}
+
+public sealed record ArrCommandResult(bool Succeeded, bool RequiresConfirmation, string Message);
 
 public sealed record OperationsActivity(
     string Id,

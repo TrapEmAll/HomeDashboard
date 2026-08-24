@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { Activity, BellRing, CalendarDays, CheckCircle2, Clock3, CloudSun, Download, Eye, EyeOff, FileUp, Film, Gauge, GitBranch, HardDrive, History, Laptop, LoaderCircle, Network, Pause, Play, Radar, RefreshCw, RotateCw, Save, ShieldCheck, Siren, Trash2, Wrench } from "lucide-react";
-import { controlDownload, createMaintenanceWindow, discoverServices, downloadBackup, getOperations, removeMaintenanceWindow, restoreBackup } from "../lib/api";
-import type { DownloadControlAction, OperationsSnapshot, ServiceDiscoveryResult } from "../types/dashboard";
+import { Activity, AlertTriangle, BellRing, CalendarDays, CheckCircle2, Clock3, CloudSun, Download, Eye, EyeOff, FileUp, Film, Gauge, GitBranch, HardDrive, History, Laptop, LoaderCircle, Network, Pause, Play, Radar, RefreshCw, RotateCw, Save, Search, ShieldCheck, Siren, Trash2, Wrench } from "lucide-react";
+import { controlDownload, createMaintenanceWindow, discoverServices, downloadBackup, getOperations, removeMaintenanceWindow, restoreBackup, runArrCommand } from "../lib/api";
+import type { ArrCommandAction, DownloadControlAction, OperationsSnapshot, ServiceDiscoveryResult } from "../types/dashboard";
 
 interface Props {
   authenticated: boolean;
@@ -38,6 +38,7 @@ export function OperationsWorkspace({ authenticated }: Props) {
   const [maintenanceEnd, setMaintenanceEnd] = useState(() => toLocalInput(new Date(Date.now() + 75 * 60_000)));
   const [weather, setWeather] = useState<WeatherState | null>(() => readWeather());
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [arrBusy, setArrBusy] = useState<string | null>(null);
   const notifiedIncidents = useRef(new Set<string>());
 
   async function load() {
@@ -78,6 +79,18 @@ export function OperationsWorkspace({ authenticated }: Props) {
   }, [snapshot]);
 
   const visible = (id: ModuleId) => !hidden.includes(id);
+
+  async function runMediaCommand(serviceId: string, action: ArrCommandAction) {
+    const key = `${serviceId}-${action}`;
+    setArrBusy(key); setError(null);
+    try {
+      let result = await runArrCommand(serviceId, action);
+      if (result.requiresConfirmation && window.confirm(result.message)) result = await runArrCommand(serviceId, action, true);
+      if (!result.succeeded) throw new Error(result.message);
+      await load();
+    } catch (ex) { setError(ex instanceof Error ? ex.message : "Media command failed."); }
+    finally { setArrBusy(null); }
+  }
   function toggleModule(id: ModuleId) {
     setHidden((current) => {
       const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
@@ -222,7 +235,7 @@ export function OperationsWorkspace({ authenticated }: Props) {
       {!snapshot && loading ? <div className="operations-loading"><LoaderCircle className="spin" size={20} /> Loading operational data...</div> : null}
       {snapshot ? <div className="operations-content">
         {tab === "activity" && visible("activity") ? <ActivityView snapshot={snapshot} /> : null}
-        {tab === "media" ? <MediaView snapshot={snapshot} showPlayback={visible("playback")} showCalendar={visible("calendar")} /> : null}
+        {tab === "media" ? <MediaView snapshot={snapshot} showPlayback={visible("playback")} showCalendar={visible("calendar")} busy={arrBusy} onCommand={runMediaCommand} /> : null}
         {tab === "downloads" && visible("downloads") ? <DownloadsView snapshot={snapshot} onAction={runDownloadAction} /> : null}
         {tab === "reliability" ? <ReliabilityView snapshot={snapshot} showIncidents={visible("incidents")} showStorage={visible("storage")} showUptime={visible("uptime")} /> : null}
         {tab === "maintenance" ? <MaintenanceView snapshot={snapshot} showMaintenance={visible("maintenance")} showToolkit={visible("toolkit")} discovery={discovery} discovering={discovering} maintenanceTitle={maintenanceTitle} maintenanceStart={maintenanceStart} maintenanceEnd={maintenanceEnd} onTitle={setMaintenanceTitle} onStart={setMaintenanceStart} onEnd={setMaintenanceEnd} onSchedule={scheduleMaintenance} onRemove={deleteMaintenance} onDiscover={scan} onRestore={restore} /> : null}
@@ -244,9 +257,27 @@ function ActivityView({ snapshot }: { snapshot: OperationsSnapshot }) {
   </div>;
 }
 
-function MediaView({ snapshot, showPlayback, showCalendar }: { snapshot: OperationsSnapshot; showPlayback: boolean; showCalendar: boolean }) {
+function MediaView({ snapshot, showPlayback, showCalendar, busy, onCommand }: { snapshot: OperationsSnapshot; showPlayback: boolean; showCalendar: boolean; busy: string | null; onCommand: (serviceId: string, action: ArrCommandAction) => Promise<void> }) {
   const grouped = useMemo(() => groupCalendar(snapshot.calendar), [snapshot.calendar]);
-  return <div className="operations-grid media-layout">
+  const [source, setSource] = useState("all");
+  const arr = snapshot.arr ?? { instances: [], queue: [], health: [], history: [] };
+  const queue = source === "all" ? arr.queue : arr.queue.filter(item => item.serviceId === source);
+  const history = source === "all" ? arr.history : arr.history.filter(item => item.serviceId === source);
+  return <div className="media-command-center">
+    <section className="operation-panel arr-overview"><PanelHeading kicker="Media automation" title="*arr control deck" meta={`${arr.instances.filter(item => item.connected).length}/${arr.instances.length} connected`} />
+      <div className="arr-summary-strip"><span><b>{arr.queue.length}</b> queued</span><span className={arr.health.length ? "warning" : ""}><b>{arr.health.length}</b> issues</span><span><b>{arr.instances.reduce((total, item) => total + item.missingCount, 0)}</b> missing</span><span><b>{arr.history.length}</b> recent events</span></div>
+      <div className="arr-instance-list">{arr.instances.length ? arr.instances.map(item => <article key={item.serviceId}>
+        <i className={item.connected ? "online" : "offline"} /><div><strong>{item.name}</strong><small>{item.kind}{item.version ? ` · v${item.version}` : ""}</small></div><span><b>{item.queueCount}</b> queue</span><span><b>{item.missingCount}</b> missing</span><span className={item.healthIssueCount ? "warning" : ""}><b>{item.healthIssueCount}</b> issues</span>
+        <div className="arr-actions">{item.kind !== "Prowlarr" ? <><button type="button" title="Refresh monitored downloads" disabled={busy !== null} onClick={() => void onCommand(item.serviceId, "RefreshMonitoredDownloads")}>{busy === `${item.serviceId}-RefreshMonitoredDownloads` ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}</button><button type="button" title="Search all monitored missing media" disabled={busy !== null} onClick={() => void onCommand(item.serviceId, "SearchMissing")}><Search size={14} /></button></> : null}</div>
+      </article>) : <Empty label="Configure an *arr API key to activate media operations." />}</div>
+    </section>
+    <div className="arr-filter-bar"><strong>Unified feed</strong><button type="button" className={source === "all" ? "active" : ""} onClick={() => setSource("all")}>All apps</button>{arr.instances.map(item => <button type="button" className={source === item.serviceId ? "active" : ""} key={item.serviceId} onClick={() => setSource(item.serviceId)}>{item.name}</button>)}</div>
+    <div className="operations-grid arr-detail-layout">
+      <section className="operation-panel"><PanelHeading kicker="Action required" title="Health issues" meta={`${arr.health.length} open`} /><div className="arr-health-list">{arr.health.length ? arr.health.map(item => <article key={item.id}><AlertTriangle size={15} /><div><strong>{item.source}</strong><span>{item.message}</span></div><small>{item.type}</small></article>) : <Empty label="No *arr health issues reported." />}</div></section>
+      <section className="operation-panel"><PanelHeading kicker="Import pipeline" title="*arr queue" meta={`${queue.length} items`} /><div className="arr-queue-list">{queue.length ? queue.map(item => <article key={`${item.serviceId}-${item.id}`}><div><strong>{item.title}</strong><span>{item.detail ?? item.source}</span><small>{item.source} · {item.trackedStatus ?? item.status}</small></div><b>{item.progressPercent.toFixed(0)}%</b><div className="progress-track"><span style={{ width: `${item.progressPercent}%` }} /></div>{item.errorMessage ? <p>{item.errorMessage}</p> : null}</article>) : <Empty label="The selected *arr queue is clear." />}</div></section>
+      <section className="operation-panel wide"><PanelHeading kicker="Library pipeline" title="Recent imports and grabs" meta={`${history.length} events`} /><div className="arr-history-list">{history.length ? history.slice(0, 30).map(item => <article key={`${item.serviceId}-${item.id}`}><History size={14} /><div><strong>{item.title}</strong><span>{item.source}{item.quality ? ` · ${item.quality}` : ""}</span></div><b>{friendlyEvent(item.eventType)}</b><time>{relativeTime(item.occurredAt)}</time></article>) : <Empty label="No recent history for the selected apps." />}</div></section>
+    </div>
+    <div className="operations-grid media-layout">
     {showPlayback ? <section className="operation-panel"><PanelHeading kicker="Plex sessions" title="Now playing" meta={`${snapshot.playbackSessions.length} active`} />
       <div className="playback-list">{snapshot.playbackSessions.length ? snapshot.playbackSessions.map(session => <article className="playback-row" key={session.id}>
         <div className="playback-art"><Play size={18} /></div><div className="playback-copy"><strong>{session.title}</strong><span>{session.subtitle ?? session.user}</span><small>{session.user} · {session.player} · {session.decision}</small><div className="progress-track"><span style={{ width: `${session.progressPercent}%` }} /></div></div><div className="playback-meta"><b>{session.progressPercent}%</b><span>{session.videoResolution ?? "Video"}</span></div>
@@ -255,6 +286,7 @@ function MediaView({ snapshot, showPlayback, showCalendar }: { snapshot: Operati
     {showCalendar ? <section className="operation-panel wide"><PanelHeading kicker="Sonarr + Radarr" title="Release calendar" meta={`${snapshot.calendar.length} releases`} />
       <div className="calendar-days">{grouped.length ? grouped.map(group => <div className="calendar-day" key={group.date}><header><strong>{group.label}</strong><span>{group.items.length}</span></header>{group.items.map(item => <article key={item.id}><div className={`calendar-type ${item.mediaType.toLowerCase()}`}>{item.mediaType === "Movie" ? <Film size={15} /> : <Laptop size={15} />}</div><div><strong>{item.title}</strong><span>{item.subtitle ?? item.source}</span></div><time>{new Date(item.airsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>{item.hasFile ? <CheckCircle2 size={15} className="success-icon" /> : null}</article>)}</div>) : <Empty label="Add Sonarr or Radarr API keys to load upcoming releases." />}</div>
     </section> : null}
+    </div>
   </div>;
 }
 
@@ -305,6 +337,7 @@ function readWeather(): WeatherState | null { try { const value = JSON.parse(loc
 function weatherCondition(code: number) { if (code === 0) return "Clear"; if (code <= 3) return "Cloudy"; if (code <= 48) return "Fog"; if (code <= 67) return "Rain"; if (code <= 77) return "Snow"; if (code <= 82) return "Showers"; return "Storms"; }
 function readHiddenModules(): ModuleId[] { try { const parsed = JSON.parse(localStorage.getItem("homedashboard-hidden-modules") ?? "[]"); return Array.isArray(parsed) ? parsed : []; } catch { return []; } }
 function relativeTime(value: string) { const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return `${seconds}s ago`; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
+function friendlyEvent(value: string) { return value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase(); }
 function formatBytes(value?: number | null) { if (!value) return "0 B"; const units = ["B", "KB", "MB", "GB", "TB"]; const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1); return `${(value / 1024 ** index).toFixed(index > 2 ? 1 : 0)} ${units[index]}`; }
 function formatRate(value?: number | null) { return value ? `${formatBytes(value)}/s` : "Idle"; }
 function toLocalInput(value: Date) { const offset = value.getTimezoneOffset() * 60_000; return new Date(value.getTime() - offset).toISOString().slice(0, 16); }
