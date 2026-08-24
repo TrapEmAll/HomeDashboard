@@ -136,6 +136,72 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordStructuredCommandsListSearchSetModeAndRemoveItems()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service);
+
+        await processor.ProcessStructuredAsync("task", "add", new Dictionary<string, string>
+        {
+            ["title"] = "Review backups",
+            ["priority"] = "Urgent",
+            ["list"] = "Servers"
+        }, "Alex", CancellationToken.None);
+
+        var choices = processor.Autocomplete("task", "backup");
+        var list = await processor.ProcessStructuredAsync("task", "list", new Dictionary<string, string>(), "Alex", CancellationToken.None);
+        var search = await processor.ProcessAsync("search backups", "Alex", CancellationToken.None);
+        var mode = await processor.ProcessStructuredAsync("system", "mode", new Dictionary<string, string> { ["mode"] = "Away" }, "Alex", CancellationToken.None);
+        var reminder = await processor.ProcessStructuredAsync("reminder", "add", new Dictionary<string, string>
+        {
+            ["title"] = "Check the UPS",
+            ["message"] = "Replace the battery this weekend"
+        }, "Alex", CancellationToken.None);
+        var removed = await processor.ProcessStructuredAsync("task", "remove", new Dictionary<string, string> { ["item"] = choices.Single().Id }, "Alex", CancellationToken.None);
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Contains("Review backups", list);
+        Assert.Contains("Review backups", search);
+        Assert.Contains("Away mode", mode);
+        Assert.Contains("created", reminder, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Removed", removed);
+        Assert.Equal("Away", snapshot.ActiveMode);
+        Assert.Empty(snapshot.Tasks);
+    }
+
+    [Fact]
+    public async Task DiscordCommandsManageInboxWithAutocomplete()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service);
+        service.Ingest(new CommandCenterWebhook("UPS", "battery", "Battery low", "Runtime is under ten minutes", NotificationSeverity.Warning));
+        var alert = processor.Autocomplete("inbox", "battery").Single();
+
+        var snoozed = await processor.ProcessStructuredAsync("inbox", "snooze", new Dictionary<string, string>
+        {
+            ["item"] = alert.Id,
+            ["minutes"] = "30"
+        }, "Alex", CancellationToken.None);
+
+        Assert.Contains("30 minutes", snoozed);
+        Assert.Empty(processor.Autocomplete("inbox", "battery"));
+    }
+
+    [Fact]
+    public void DiscordSlashCommandCatalogBuildsGuidedCommandTree()
+    {
+        var command = DiscordSlashCommandCatalog.Build();
+
+        Assert.Equal("home", command.Name.Value);
+        Assert.Contains(command.Options.Value, option => option.Name == "task");
+        Assert.Contains(command.Options.Value, option => option.Name == "shopping");
+        Assert.Contains(command.Options.Value, option => option.Name == "system");
+        Assert.Contains(command.Options.Value, option => option.Name == "device");
+        Assert.Contains(command.Options.Value, option => option.Name == "automation");
+        Assert.Contains(command.Options.Value, option => option.Name == "help");
+    }
+
+    [Fact]
     public void DiscordConfigurationRequiresEnabledConnectorAndParsesAllowlists()
     {
         var service = CreateService();
