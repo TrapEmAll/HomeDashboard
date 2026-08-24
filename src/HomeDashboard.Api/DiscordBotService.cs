@@ -73,6 +73,7 @@ public sealed class DiscordBotService(
         socket.MessageReceived += HandleMessageAsync;
         socket.SlashCommandExecuted += HandleSlashCommandAsync;
         socket.AutocompleteExecuted += HandleAutocompleteAsync;
+        socket.SelectMenuExecuted += HandleSelectMenuAsync;
         socket.Ready += HandleReadyAsync;
         socket.Disconnected += HandleDisconnectedAsync;
         socket.Log += HandleLogAsync;
@@ -95,6 +96,7 @@ public sealed class DiscordBotService(
         socket.MessageReceived -= HandleMessageAsync;
         socket.SlashCommandExecuted -= HandleSlashCommandAsync;
         socket.AutocompleteExecuted -= HandleAutocompleteAsync;
+        socket.SelectMenuExecuted -= HandleSelectMenuAsync;
         socket.Ready -= HandleReadyAsync;
         socket.Disconnected -= HandleDisconnectedAsync;
         socket.Log -= HandleLogAsync;
@@ -116,6 +118,7 @@ public sealed class DiscordBotService(
                 var command = DiscordSlashCommandCatalog.Build();
                 if (configuration.AllowedGuildIds.Count > 0)
                 {
+                    var registeredGuilds = 0;
                     foreach (var guildId in configuration.AllowedGuildIds)
                     {
                         var guild = socket.GetGuild(guildId);
@@ -125,7 +128,10 @@ public sealed class DiscordBotService(
                             continue;
                         }
                         await guild.BulkOverwriteApplicationCommandAsync([command]);
+                        registeredGuilds++;
                     }
+                    if (registeredGuilds == 0)
+                        throw new InvalidOperationException("None of the configured Discord server IDs belongs to a server containing this bot.");
                 }
                 else
                 {
@@ -171,6 +177,25 @@ public sealed class DiscordBotService(
         {
             var response = await processor.ProcessAsync(command, message.Author.Username, CancellationToken.None);
             if (configuration.Prefix != "!hd") response = response.Replace("!hd", configuration.Prefix, StringComparison.Ordinal);
+            if (response.StartsWith(DiscordCommandProcessor.AmbiguousMediaMessage, StringComparison.Ordinal)
+                && MediaAddQuery(command) is { } query)
+            {
+                var choices = await processor.SearchMediaChoicesAsync(query, CancellationToken.None);
+                if (choices.Count > 1)
+                {
+                    var menu = new SelectMenuBuilder()
+                        .WithCustomId($"hd:media:{message.Author.Id}")
+                        .WithPlaceholder("Choose the exact Sonarr or Radarr release")
+                        .WithMinValues(1)
+                        .WithMaxValues(1);
+                    foreach (var choice in choices.Take(25))
+                        menu.AddOption(LimitChoice(choice.Title, null), choice.Id, LimitChoice(choice.Subtitle ?? "Verified release", null));
+                    var components = new ComponentBuilder().WithSelectMenu(menu).Build();
+                    await message.Channel.SendMessageAsync("Several releases match. Choose the exact title below:", components: components,
+                        allowedMentions: AllowedMentions.None);
+                    return;
+                }
+            }
             await message.Channel.SendMessageAsync(response, allowedMentions: AllowedMentions.None);
         }
         catch (Exception ex)
@@ -232,6 +257,42 @@ public sealed class DiscordBotService(
         }
     }
 
+    private async Task HandleSelectMenuAsync(SocketMessageComponent interaction)
+    {
+        var configuration = activeConfiguration;
+        if (configuration is null || !interaction.Data.CustomId.StartsWith("hd:media:", StringComparison.Ordinal)) return;
+        if (!IsAuthorized(interaction, configuration))
+        {
+            await interaction.RespondAsync("This HomeDashboard selection is not available to your Discord account or channel.", ephemeral: true);
+            return;
+        }
+        var owner = interaction.Data.CustomId["hd:media:".Length..];
+        if (!owner.Equals(interaction.User.Id.ToString(), StringComparison.Ordinal))
+        {
+            await interaction.RespondAsync("Only the person who started this request can choose its release.", ephemeral: true);
+            return;
+        }
+
+        try
+        {
+            var selectionId = interaction.Data.Values.FirstOrDefault();
+            var response = string.IsNullOrWhiteSpace(selectionId)
+                ? "No release was selected."
+                : await processor.AddSelectedMediaAsync(selectionId, interaction.User.Username, CancellationToken.None);
+            await interaction.UpdateAsync(message =>
+            {
+                message.Content = LimitMessage(response);
+                message.Components = new ComponentBuilder().Build();
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Discord media selection failed for user {UserId}", interaction.User.Id);
+            if (!interaction.HasResponded)
+                await interaction.RespondAsync("The media request could not be completed. Search again and choose a current result.", ephemeral: true);
+        }
+    }
+
     private static (string Area, string Action, IReadOnlyDictionary<string, string> Options) ReadSlashCommand(
         IReadOnlyCollection<SocketSlashCommandDataOption> roots)
     {
@@ -271,6 +332,14 @@ public sealed class DiscordBotService(
 
     private static string LimitMessage(string value) => value.Length <= 1900 ? value : value[..1897] + "...";
 
+    private static string? MediaAddQuery(string command)
+    {
+        var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 3 || !(parts[0].Equals("media", StringComparison.OrdinalIgnoreCase)
+            || parts[0].Equals("request", StringComparison.OrdinalIgnoreCase)) || !parts[1].Equals("add", StringComparison.OrdinalIgnoreCase)) return null;
+        return parts[2].Split('|', 2, StringSplitOptions.TrimEntries)[0];
+    }
+
     private static bool IsAuthorized(SocketUserMessage message, DiscordBotConfiguration configuration)
     {
         if (!configuration.AllowedUserIds.Contains(message.Author.Id)) return false;
@@ -301,6 +370,7 @@ public sealed record DiscordCommandChoice(string Id, string Title, string? Subti
 
 public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter, IArrMediaRequestService? arrMedia = null)
 {
+    public const string AmbiguousMediaMessage = "Several releases match that text.";
     public async Task<string> ProcessAsync(string command, string actor, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(command) || command.Equals("help", StringComparison.OrdinalIgnoreCase)) return Help();
@@ -387,6 +457,17 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         }
         return Autocomplete(area, query);
     }
+
+    public async Task<IReadOnlyList<DiscordCommandChoice>> SearchMediaChoicesAsync(string query, CancellationToken cancellationToken)
+    {
+        if (arrMedia is null || query.Trim().Length < 2) return [];
+        var results = await arrMedia.SearchAsync(query, cancellationToken);
+        return results.Select(item => new DiscordCommandChoice(item.SelectionId, $"{item.Title}{Year(item.Year)}",
+            $"{item.MediaType} · {item.Source}{(item.ImdbId is null ? "" : $" · {item.ImdbId}")}" )).Take(25).ToArray();
+    }
+
+    public Task<string> AddSelectedMediaAsync(string selectionId, string actor, CancellationToken cancellationToken) =>
+        AddMediaAsync($"{selectionId} | true", actor, cancellationToken);
 
     private async Task<string> ProcessCoreAsync(string area, string action, string value, string actor, CancellationToken cancellationToken)
     {
@@ -507,7 +588,7 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
             if (exact.Length == 1) selection = exact[0].SelectionId;
             else if (matches.Count == 1) selection = matches[0].SelectionId;
             else return matches.Count == 0 ? "No matching Sonarr or Radarr release was found."
-                : "Several releases match that text. Use `/home media add` and select the correct title, year, and IMDb ID from autocomplete.";
+                : $"{AmbiguousMediaMessage} Choose the correct title, year, and IMDb ID from the Discord menu.";
         }
 
         var result = await arrMedia.RequestAsync(selection, searchNow, cancellationToken);
