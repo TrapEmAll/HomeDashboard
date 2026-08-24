@@ -138,7 +138,8 @@ public sealed record IntegrationStatus(
     DateTimeOffset? LastCheckedAt,
     IReadOnlyList<string> Capabilities,
     string? BaseUrl,
-    bool HasSecret);
+    bool HasSecret,
+    IReadOnlyDictionary<string, string> Settings);
 
 public sealed record UpdateIntegrationRequest(
     string Name,
