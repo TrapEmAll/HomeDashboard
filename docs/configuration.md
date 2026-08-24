@@ -153,12 +153,15 @@ Personal command-center data is stored beside that file as `homedashboard-comman
     "DataPath": "data/homedashboard-state.json",
     "AgentHistoryLimit": 120,
     "NetworkProbeTarget": "",
-    "NetworkProbeIntervalSeconds": 30
+    "NetworkProbeIntervalSeconds": 30,
+    "HostDetailRefreshSeconds": 60
   }
 }
 ```
 
 The API host samples every active physical network interface for receive/send bandwidth, packets per second, link speed, errors, and discarded packets. It also runs a non-blocking four-packet quality probe at the configured interval. An empty `NetworkProbeTarget` automatically uses the active IPv4 default gateway, which measures LAN quality; set a hostname or IP such as `1.1.1.1` to include the upstream internet path. The interval is constrained to 10-300 seconds.
+
+Disk, process, and pending-reboot details are reused for `HostDetailRefreshSeconds` (15-300 seconds, 60 by default). CPU, memory, bandwidth, packet rates, and service health remain live. This avoids repeatedly enumerating every Windows process during normal dashboard refreshes.
 
 ## RSS feeds
 

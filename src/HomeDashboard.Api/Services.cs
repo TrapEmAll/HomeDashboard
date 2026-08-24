@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Xml.Linq;
+using System.Xml;
 using HomeDashboard.Contracts;
 using Microsoft.Extensions.Options;
 using Microsoft.Win32;
@@ -361,6 +362,7 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         lock (gate)
         {
             state.Commands.Add(command);
+            TrimCommands(state.Commands);
             AddAuditEventLocked(new AuditEvent(
                 Guid.NewGuid().ToString("n"),
                 AuditEventType.RestartQueued,
@@ -388,6 +390,7 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         lock (gate)
         {
             state.Commands.Add(command);
+            TrimCommands(state.Commands);
             AddAuditEventLocked(new AuditEvent(Guid.NewGuid().ToString("n"), AuditEventType.RestartQueued,
                 $"{kind} queued for agent {agentId}.", null, agentId, request.RequestedBy, command.RequestedAt, command.Id));
             SaveLocked();
@@ -490,7 +493,20 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         try
         {
             var json = File.ReadAllText(statePath);
-            return JsonSerializer.Deserialize<DashboardState>(json, serializerOptions) ?? new DashboardState();
+            var loaded = JsonSerializer.Deserialize<DashboardState>(json, serializerOptions) ?? new DashboardState();
+            foreach (var history in loaded.History.Values)
+            {
+                if (history.Count > historyLimit)
+                {
+                    history.RemoveRange(0, history.Count - historyLimit);
+                }
+            }
+            if (loaded.AuditEvents.Count > 300)
+            {
+                loaded.AuditEvents.RemoveRange(0, loaded.AuditEvents.Count - 300);
+            }
+            TrimCommands(loaded.Commands);
+            return loaded;
         }
         catch (JsonException)
         {
@@ -521,6 +537,24 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
         {
             state.AuditEvents.RemoveRange(0, state.AuditEvents.Count - 300);
         }
+    }
+
+    private static void TrimCommands(List<AgentCommand> commands)
+    {
+        const int maximum = 300;
+        if (commands.Count <= maximum)
+        {
+            return;
+        }
+
+        var removeCount = commands.Count - maximum;
+        var removable = commands
+            .Where(command => command.State is AgentCommandState.Succeeded or AgentCommandState.Failed)
+            .OrderBy(command => command.RequestedAt)
+            .Take(removeCount)
+            .Select(command => command.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        commands.RemoveAll(command => removable.Contains(command.Id));
     }
 
     private sealed class DashboardState
@@ -1059,8 +1093,14 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 
     private readonly string? configuredProbeTarget;
     private readonly TimeSpan probeInterval;
+    private readonly TimeSpan hostDetailInterval;
     private readonly object networkLock = new();
+    private readonly object detailLock = new();
     private readonly Dictionary<string, NetworkCounters> previousNetworkCounters = new(StringComparer.Ordinal);
+    private IReadOnlyList<DiskStats> cachedDisks = [];
+    private IReadOnlyList<ProcessStats> cachedTopProcesses = [];
+    private bool cachedPendingReboot;
+    private DateTimeOffset hostDetailsExpireAt = DateTimeOffset.MinValue;
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
     private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
@@ -1080,16 +1120,13 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
             ? null
             : options.Value.NetworkProbeTarget.Trim();
         probeInterval = TimeSpan.FromSeconds(Math.Clamp(options.Value.NetworkProbeIntervalSeconds, 10, 300));
+        hostDetailInterval = TimeSpan.FromSeconds(Math.Clamp(options.Value.HostDetailRefreshSeconds, 15, 300));
         SeedNetworkCounters();
     }
 
     public SystemStats GetStats()
     {
-        var disks = DriveInfo
-            .GetDrives()
-            .Where(drive => drive.IsReady)
-            .Select(drive => new DiskStats(drive.Name, drive.TotalSize, drive.AvailableFreeSpace))
-            .ToArray();
+        var details = GetHostDetails();
 
         var memoryUsed = GC.GetGCMemoryInfo();
         var memoryPercent = memoryUsed.TotalAvailableMemoryBytes > 0
@@ -1104,16 +1141,34 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
             Environment.MachineName,
             (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
             Math.Round(GetMemoryUsedPercent(memoryPercent), 1),
-            disks,
+            details.Disks,
             DateTimeOffset.UtcNow,
             Environment.TickCount64 / 1000,
             Environment.OSVersion.VersionString,
-            IsPendingReboot(),
+            details.PendingReboot,
             networkReceived,
             networkSent,
-            GetTopProcesses(),
+            details.TopProcesses,
             networkInterfaces,
             lastNetworkProbe);
+    }
+
+    private (IReadOnlyList<DiskStats> Disks, IReadOnlyList<ProcessStats> TopProcesses, bool PendingReboot) GetHostDetails()
+    {
+        lock (detailLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (now >= hostDetailsExpireAt)
+            {
+                cachedDisks = DriveInfo.GetDrives().Where(drive => drive.IsReady)
+                    .Select(drive => new DiskStats(drive.Name, drive.TotalSize, drive.AvailableFreeSpace)).ToArray();
+                cachedTopProcesses = GetTopProcesses();
+                cachedPendingReboot = IsPendingReboot();
+                hostDetailsExpireAt = now.Add(hostDetailInterval);
+            }
+
+            return (cachedDisks, cachedTopProcesses, cachedPendingReboot);
+        }
     }
 
     private IReadOnlyList<NetworkInterfaceStats> GetNetworkStats()
@@ -1266,21 +1321,33 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
         => previous.HasValue && current >= previous.Value ? Math.Max(0, Math.Round((current - previous.Value) / elapsed, 1)) : 0;
 
     private static IReadOnlyList<ProcessStats> GetTopProcesses()
-        => Process.GetProcesses().Select(process =>
+    {
+        var largest = new PriorityQueue<ProcessStats, long>();
+        foreach (var process in Process.GetProcesses())
         {
             try
             {
-                return new ProcessStats(process.Id, process.ProcessName, process.WorkingSet64, process.TotalProcessorTime);
+                var workingSet = process.WorkingSet64;
+                if (largest.Count < 8 || largest.TryPeek(out _, out var smallest) && workingSet > smallest)
+                {
+                    if (largest.Count == 8)
+                    {
+                        largest.Dequeue();
+                    }
+                    largest.Enqueue(new ProcessStats(process.Id, process.ProcessName, workingSet, process.TotalProcessorTime), workingSet);
+                }
             }
             catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
             {
-                return null;
             }
             finally
             {
                 process.Dispose();
             }
-        }).Where(item => item is not null).Cast<ProcessStats>().OrderByDescending(item => item.WorkingSetBytes).Take(8).ToArray();
+        }
+
+        return largest.UnorderedItems.Select(item => item.Element).OrderByDescending(item => item.WorkingSetBytes).ToArray();
+    }
 
     private static bool IsPendingReboot()
     {
@@ -1474,7 +1541,14 @@ public sealed class RssNewsProvider(
             }
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var document = await XDocument.LoadAsync(stream, LoadOptions.None, cancellationToken);
+            using var reader = XmlReader.Create(stream, new XmlReaderSettings
+            {
+                Async = true,
+                DtdProcessing = DtdProcessing.Prohibit,
+                IgnoreComments = true,
+                MaxCharactersInDocument = 8_000_000
+            });
+            var document = await XDocument.LoadAsync(reader, LoadOptions.None, cancellationToken);
             var items = ParseFeed(feed.Name, document, feed.Kind, feed.Category, feed.ProviderUrl)
                 .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
                 .Take(feed.Kind == NewsContentKind.Podcast ? 6 : 8)
@@ -1519,16 +1593,16 @@ public sealed class RssNewsProvider(
                 ?? item.Elements().FirstOrDefault(element => element.Name.LocalName == "thumbnail")?.Attribute("url")?.Value);
             return new NewsItem(
                 source,
-                Read(item, "title") ?? "Untitled",
+                LimitText(Read(item, "title"), 240) ?? "Untitled",
                 TryUri(Read(item, "link")),
                 TryDate(Read(item, "pubDate")),
-                Read(item, "description"),
+                LimitText(Read(item, "description"), 1200),
                 kind,
                 category,
                 providerUrl,
                 mediaUrl,
                 imageUrl,
-                ReadLocal(item, "duration"));
+                LimitText(ReadLocal(item, "duration"), 40));
         });
 
         XNamespace atom = "http://www.w3.org/2005/Atom";
@@ -1537,16 +1611,16 @@ public sealed class RssNewsProvider(
             var links = entry.Elements(atom + "link").ToArray();
             return new NewsItem(
                 source,
-                Read(entry, atom + "title") ?? "Untitled",
+                LimitText(Read(entry, atom + "title"), 240) ?? "Untitled",
                 TryUri(links.FirstOrDefault(link => link.Attribute("rel")?.Value != "enclosure")?.Attribute("href")?.Value),
                 TryDate(Read(entry, atom + "updated") ?? Read(entry, atom + "published")),
-                Read(entry, atom + "summary"),
+                LimitText(Read(entry, atom + "summary"), 1200),
                 kind,
                 category,
                 providerUrl,
                 TryUri(links.FirstOrDefault(link => link.Attribute("rel")?.Value == "enclosure" && link.Attribute("type")?.Value.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true)?.Attribute("href")?.Value),
                 TryUri(entry.Elements().FirstOrDefault(element => element.Name.LocalName is "thumbnail" or "image")?.Attribute("url")?.Value),
-                ReadLocal(entry, "duration"));
+                LimitText(ReadLocal(entry, "duration"), 40));
         });
 
         return rssItems.Concat(atomItems).ToArray();
@@ -1563,6 +1637,9 @@ public sealed class RssNewsProvider(
 
     private static DateTimeOffset? TryDate(string? value)
         => DateTimeOffset.TryParse(value, out var date) ? date : null;
+
+    private static string? LimitText(string? value, int maximum)
+        => value is null || value.Length <= maximum ? value : value[..maximum];
 
     private sealed record FeedCacheEntry(
         IReadOnlyList<NewsItem> Items,

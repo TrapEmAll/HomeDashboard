@@ -15,6 +15,7 @@ public sealed class DashboardOptionsLoaderTests
             ["Dashboard:AgentHistoryLimit"] = "invalid",
             ["Dashboard:NetworkProbeTarget"] = " 1.1.1.1 ",
             ["Dashboard:NetworkProbeIntervalSeconds"] = "45",
+            ["Dashboard:HostDetailRefreshSeconds"] = "90",
             ["Dashboard:Services:0:Id"] = "plex",
             ["Dashboard:Services:0:Name"] = "Plex",
             ["Dashboard:Services:0:Kind"] = "not-a-kind",
@@ -35,6 +36,7 @@ public sealed class DashboardOptionsLoaderTests
         Assert.Equal(120, options.AgentHistoryLimit);
         Assert.Equal("1.1.1.1", options.NetworkProbeTarget);
         Assert.Equal(45, options.NetworkProbeIntervalSeconds);
+        Assert.Equal(90, options.HostDetailRefreshSeconds);
         var service = Assert.Single(options.Services);
         Assert.Equal(ServiceKind.Generic, service.Kind);
         Assert.Equal("http://localhost:32400/", service.Url!.AbsoluteUri);

@@ -63,6 +63,8 @@ public sealed class SetupServiceTests
         Assert.Contains("password-hash", writer.Json);
         Assert.Contains("plex-secret", writer.Json);
         Assert.Contains("media-pc", writer.Json);
+        Assert.Contains("1.1.1.1", writer.Json);
+        Assert.Contains("hostDetailRefreshSeconds", writer.Json);
     }
 
     [Fact]
@@ -111,6 +113,9 @@ public sealed class SetupServiceTests
                 DefaultAgentId = "server-pc",
                 DataPath = "dashboard-state.test.json",
                 IncludeRecommendedFeeds = true,
+                NetworkProbeTarget = "1.1.1.1",
+                NetworkProbeIntervalSeconds = 45,
+                HostDetailRefreshSeconds = 90,
                 Services = [new ServiceDefinition
                 {
                     Id = "plex",

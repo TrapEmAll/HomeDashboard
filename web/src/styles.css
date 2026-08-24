@@ -3294,6 +3294,14 @@ body:has(.settings-backdrop) {
   font-size: 9px;
 }
 
+/* Defer layout and paint work for large workspaces until they approach the viewport. */
+.command-center-shell,
+.operations-workspace,
+.content-hub {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 900px;
+}
+
 .network-empty {
   min-height: 42px;
   justify-content: center;
