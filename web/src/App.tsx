@@ -8,6 +8,7 @@ import { OperationsWorkspace } from "./components/OperationsWorkspace";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SettingsDrawer } from "./components/SettingsDrawer";
 import { SystemPanel } from "./components/SystemPanel";
+import { NetworkPanel } from "./components/NetworkPanel";
 import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, ServiceKind, ServiceStatus, SetupRequest, SetupStatus, UpdateDashboardSettingsRequest } from "./types/dashboard";
 import "./styles.css";
 
@@ -553,6 +554,7 @@ export function App() {
                   )}
                 </div>
               </section>
+              <NetworkPanel system={snapshot.apiSystem ?? snapshot.system} />
               <SystemPanel system={snapshot.system} history={agentHistory} />
               <AuditPanel events={snapshot.recentAuditEvents} />
             </aside> : null}

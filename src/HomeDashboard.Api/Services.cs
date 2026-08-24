@@ -113,7 +113,8 @@ public sealed class DashboardService(
         var activeAgent = latestAgent?.CapturedAt >= DateTimeOffset.UtcNow.AddMinutes(-2) ? latestAgent : null;
         var configuredServices = await servicesTask;
         var services = MergeServices(configuredServices, activeAgent?.Services);
-        var system = activeAgent?.System ?? GetSystemStatsSafely();
+        var apiSystem = GetSystemStatsSafely();
+        var system = activeAgent?.System ?? apiSystem;
         var agents = agentSnapshotStore.GetAll();
         var news = await GetNewsWithinDisplayBudgetAsync(newsTask, cancellationToken);
 
@@ -124,7 +125,8 @@ public sealed class DashboardService(
             news,
             agents,
             BuildNotifications(system, services, agents),
-            commandStore.GetRecentAuditEvents(8));
+            commandStore.GetRecentAuditEvents(8),
+            apiSystem);
     }
 
     private async Task<IReadOnlyList<ServiceCard>> GetServicesSafelyAsync(CancellationToken cancellationToken)
@@ -1049,12 +1051,37 @@ public sealed class ConfiguredServiceStatusProvider(
 
 public sealed class LocalSystemStatsProvider : ISystemStatsProvider
 {
+    private sealed record NetworkCounters(
+        long ReceivedBytes,
+        long SentBytes,
+        long ReceivedPackets,
+        long SentPackets);
+
+    private readonly string? configuredProbeTarget;
+    private readonly TimeSpan probeInterval;
+    private readonly object networkLock = new();
+    private readonly Dictionary<string, NetworkCounters> previousNetworkCounters = new(StringComparer.Ordinal);
     private DateTimeOffset lastSampledAt = DateTimeOffset.UtcNow;
     private TimeSpan lastProcessorTime = Process.GetCurrentProcess().TotalProcessorTime;
     private readonly PerformanceCounter? cpuCounter = CreateCpuCounter();
     private DateTimeOffset lastNetworkSampledAt = DateTimeOffset.UtcNow;
-    private long lastNetworkReceived = ReadNetworkBytes().Received;
-    private long lastNetworkSent = ReadNetworkBytes().Sent;
+    private NetworkProbeStats? lastNetworkProbe;
+    private DateTimeOffset nextNetworkProbeAt = DateTimeOffset.MinValue;
+    private int networkProbeRunning;
+
+    public LocalSystemStatsProvider()
+        : this(Options.Create(new DashboardOptions()))
+    {
+    }
+
+    public LocalSystemStatsProvider(IOptions<DashboardOptions> options)
+    {
+        configuredProbeTarget = string.IsNullOrWhiteSpace(options.Value.NetworkProbeTarget)
+            ? null
+            : options.Value.NetworkProbeTarget.Trim();
+        probeInterval = TimeSpan.FromSeconds(Math.Clamp(options.Value.NetworkProbeIntervalSeconds, 10, 300));
+        SeedNetworkCounters();
+    }
 
     public SystemStats GetStats()
     {
@@ -1069,7 +1096,10 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
             ? Math.Clamp((double)Process.GetCurrentProcess().WorkingSet64 / memoryUsed.TotalAvailableMemoryBytes * 100, 0, 100)
             : 0;
 
-        var network = GetNetworkRates();
+        var networkInterfaces = GetNetworkStats();
+        var networkReceived = networkInterfaces.Sum(item => item.ReceiveBytesPerSecond);
+        var networkSent = networkInterfaces.Sum(item => item.SendBytesPerSecond);
+        ScheduleNetworkProbe();
         return new SystemStats(
             Environment.MachineName,
             (OperatingSystem.IsWindows() ? GetHostCpuPercent() : null) ?? GetProcessCpuPercent(),
@@ -1079,40 +1109,161 @@ public sealed class LocalSystemStatsProvider : ISystemStatsProvider
             Environment.TickCount64 / 1000,
             Environment.OSVersion.VersionString,
             IsPendingReboot(),
-            network.Received,
-            network.Sent,
-            GetTopProcesses());
+            networkReceived,
+            networkSent,
+            GetTopProcesses(),
+            networkInterfaces,
+            lastNetworkProbe);
     }
 
-    private (long Received, long Sent) GetNetworkRates()
+    private IReadOnlyList<NetworkInterfaceStats> GetNetworkStats()
     {
-        var now = DateTimeOffset.UtcNow;
-        var totals = ReadNetworkBytes();
-        var elapsed = Math.Max((now - lastNetworkSampledAt).TotalSeconds, 0.1);
-        var rates = (
-            Math.Max(0, (long)((totals.Received - lastNetworkReceived) / elapsed)),
-            Math.Max(0, (long)((totals.Sent - lastNetworkSent) / elapsed)));
-        lastNetworkSampledAt = now;
-        lastNetworkReceived = totals.Received;
-        lastNetworkSent = totals.Sent;
-        return rates;
+        lock (networkLock)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var elapsed = Math.Max((now - lastNetworkSampledAt).TotalSeconds, 0.1);
+            var result = new List<NetworkInterfaceStats>();
+
+            foreach (var item in GetActiveNetworkInterfaces())
+            {
+                try
+                {
+                    var stats = item.GetIPStatistics();
+                    var counters = new NetworkCounters(
+                        stats.BytesReceived,
+                        stats.BytesSent,
+                        stats.UnicastPacketsReceived,
+                        stats.UnicastPacketsSent);
+                    previousNetworkCounters.TryGetValue(item.Id, out var previous);
+                    previousNetworkCounters[item.Id] = counters;
+
+                    result.Add(new NetworkInterfaceStats(
+                        item.Id,
+                        item.Name,
+                        item.Description,
+                        item.NetworkInterfaceType.ToString(),
+                        GetInterfaceAddress(item),
+                        Math.Max(0, item.Speed),
+                        Rate(counters.ReceivedBytes, previous?.ReceivedBytes, elapsed),
+                        Rate(counters.SentBytes, previous?.SentBytes, elapsed),
+                        RateDouble(counters.ReceivedPackets, previous?.ReceivedPackets, elapsed),
+                        RateDouble(counters.SentPackets, previous?.SentPackets, elapsed),
+                        stats.IncomingPacketsWithErrors,
+                        stats.OutgoingPacketsWithErrors,
+                        stats.IncomingPacketsDiscarded,
+                        OperatingSystem.IsMacOS() ? 0 : stats.OutgoingPacketsDiscarded));
+                }
+                catch (Exception ex) when (ex is NetworkInformationException or PlatformNotSupportedException)
+                {
+                    // Interfaces can disappear between enumeration and counter collection.
+                }
+            }
+
+            lastNetworkSampledAt = now;
+            return result.OrderByDescending(item => item.ReceiveBytesPerSecond + item.SendBytesPerSecond).ToArray();
+        }
     }
 
-    private static (long Received, long Sent) ReadNetworkBytes()
+    private void SeedNetworkCounters()
+    {
+        foreach (var item in GetActiveNetworkInterfaces())
+        {
+            try
+            {
+                var stats = item.GetIPStatistics();
+                previousNetworkCounters[item.Id] = new NetworkCounters(
+                    stats.BytesReceived,
+                    stats.BytesSent,
+                    stats.UnicastPacketsReceived,
+                    stats.UnicastPacketsSent);
+            }
+            catch (Exception ex) when (ex is NetworkInformationException or PlatformNotSupportedException)
+            {
+            }
+        }
+    }
+
+    private void ScheduleNetworkProbe()
+    {
+        if (DateTimeOffset.UtcNow < nextNetworkProbeAt || Interlocked.CompareExchange(ref networkProbeRunning, 1, 0) != 0)
+        {
+            return;
+        }
+
+        nextNetworkProbeAt = DateTimeOffset.UtcNow.Add(probeInterval);
+        _ = ProbeNetworkAsync();
+    }
+
+    private async Task ProbeNetworkAsync()
     {
         try
         {
-            var stats = NetworkInterface.GetAllNetworkInterfaces()
-                .Where(item => item.OperationalStatus == OperationalStatus.Up && item.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-                .Select(item => item.GetIPv4Statistics())
-                .ToArray();
-            return (stats.Sum(item => item.BytesReceived), stats.Sum(item => item.BytesSent));
+            var target = configuredProbeTarget ?? GetDefaultGateway();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                return;
+            }
+
+            const int count = 4;
+            var latencies = new List<long>(count);
+            using var ping = new Ping();
+            for (var attempt = 0; attempt < count; attempt++)
+            {
+                try
+                {
+                    var reply = await ping.SendPingAsync(target, 1000);
+                    if (reply.Status == IPStatus.Success)
+                    {
+                        latencies.Add(reply.RoundtripTime);
+                    }
+                }
+                catch (Exception ex) when (ex is PingException or InvalidOperationException)
+                {
+                }
+            }
+
+            lastNetworkProbe = new NetworkProbeStats(
+                target,
+                Math.Round((count - latencies.Count) / (double)count * 100, 1),
+                latencies.Count == 0 ? null : Math.Round(latencies.Average(), 1),
+                latencies.Count == 0 ? null : latencies.Min(),
+                latencies.Count == 0 ? null : latencies.Max(),
+                count,
+                latencies.Count,
+                DateTimeOffset.UtcNow);
         }
-        catch (NetworkInformationException)
+        finally
         {
-            return (0, 0);
+            Interlocked.Exchange(ref networkProbeRunning, 0);
         }
     }
+
+    private static IReadOnlyList<NetworkInterface> GetActiveNetworkInterfaces()
+        => NetworkInterface.GetAllNetworkInterfaces()
+            .Where(item => item.OperationalStatus == OperationalStatus.Up
+                && item.NetworkInterfaceType is not NetworkInterfaceType.Loopback and not NetworkInterfaceType.Tunnel)
+            .ToArray();
+
+    private static string? GetInterfaceAddress(NetworkInterface item)
+        => item.GetIPProperties().UnicastAddresses
+            .Select(address => address.Address)
+            .FirstOrDefault(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                && !IPAddress.IsLoopback(address))
+            ?.ToString();
+
+    private static string? GetDefaultGateway()
+        => GetActiveNetworkInterfaces()
+            .SelectMany(item => item.GetIPProperties().GatewayAddresses)
+            .Select(item => item.Address)
+            .FirstOrDefault(address => address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+                && !address.Equals(IPAddress.Any))
+            ?.ToString();
+
+    private static long Rate(long current, long? previous, double elapsed)
+        => previous.HasValue && current >= previous.Value ? Math.Max(0, (long)((current - previous.Value) / elapsed)) : 0;
+
+    private static double RateDouble(long current, long? previous, double elapsed)
+        => previous.HasValue && current >= previous.Value ? Math.Max(0, Math.Round((current - previous.Value) / elapsed, 1)) : 0;
 
     private static IReadOnlyList<ProcessStats> GetTopProcesses()
         => Process.GetProcesses().Select(process =>

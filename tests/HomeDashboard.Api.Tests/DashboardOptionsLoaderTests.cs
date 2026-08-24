@@ -13,6 +13,8 @@ public sealed class DashboardOptionsLoaderTests
         {
             ["Dashboard:DefaultAgentId"] = "media-pc",
             ["Dashboard:AgentHistoryLimit"] = "invalid",
+            ["Dashboard:NetworkProbeTarget"] = " 1.1.1.1 ",
+            ["Dashboard:NetworkProbeIntervalSeconds"] = "45",
             ["Dashboard:Services:0:Id"] = "plex",
             ["Dashboard:Services:0:Name"] = "Plex",
             ["Dashboard:Services:0:Kind"] = "not-a-kind",
@@ -31,6 +33,8 @@ public sealed class DashboardOptionsLoaderTests
 
         Assert.Equal("media-pc", options.DefaultAgentId);
         Assert.Equal(120, options.AgentHistoryLimit);
+        Assert.Equal("1.1.1.1", options.NetworkProbeTarget);
+        Assert.Equal(45, options.NetworkProbeIntervalSeconds);
         var service = Assert.Single(options.Services);
         Assert.Equal(ServiceKind.Generic, service.Kind);
         Assert.Equal("http://localhost:32400/", service.Url!.AbsoluteUri);

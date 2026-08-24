@@ -10,7 +10,7 @@ Browser
     v
 Dashboard API
   ASP.NET Core minimal API
-  service cards, native service checks, RSS news, persisted state, browser auth
+  service cards, native service checks, API-host network telemetry, RSS news, persisted state, browser auth
     |
     | X-HomeDashboard-Key
     v
@@ -54,6 +54,8 @@ RSS and Atom feeds are configured in `appsettings.json`. The API fetches feeds s
 ## Agent behavior
 
 The agent reads configured Windows service statuses, collects disk/memory/sampled CPU stats, posts snapshots to the API with `X-HomeDashboard-Key`, polls for queued commands, and reports command completion.
+
+The dashboard snapshot keeps agent system telemetry and API-host telemetry separate. The API host view samples per-interface byte and packet counters and publishes the last completed background latency/loss probe; network probing never blocks snapshot generation.
 
 Next steps:
 

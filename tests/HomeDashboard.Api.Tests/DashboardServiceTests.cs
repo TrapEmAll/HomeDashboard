@@ -16,6 +16,7 @@ public sealed class DashboardServiceTests
         Assert.True(stats.UptimeSeconds > 0);
         Assert.False(string.IsNullOrWhiteSpace(stats.OsVersion));
         Assert.NotNull(stats.TopProcesses);
+        Assert.NotNull(stats.NetworkInterfaces);
     }
 
     [Fact]
@@ -82,6 +83,31 @@ public sealed class DashboardServiceTests
 
         Assert.Equal("api-host", snapshot.System.Hostname);
         Assert.Equal(3600, snapshot.System.UptimeSeconds);
+        Assert.Same(localSystem, snapshot.ApiSystem);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_keeps_api_host_telemetry_when_remote_agent_is_active()
+    {
+        var agentSystem = new SystemStats("remote-agent", 12, 34, [], DateTimeOffset.UtcNow);
+        var apiSystem = new SystemStats(
+            "api-host", 21, 43, [], DateTimeOffset.UtcNow, NetworkInterfaces:
+            [new NetworkInterfaceStats("ethernet", "Ethernet", "Adapter", "Ethernet", "192.168.0.18", 1_000_000_000, 1024, 512, 4, 2, 0, 0, 0, 0)]);
+        var store = new SnapshotStore(new AgentSnapshot("server-pc", DateTimeOffset.UtcNow, agentSystem, []));
+        var dashboard = new DashboardService(
+            new ServiceProvider(Card(ServiceStatus.Online, "Online")),
+            new SystemProvider(apiSystem),
+            new NewsProvider(),
+            store,
+            store,
+            Options.Create(new DashboardOptions { DefaultAgentId = "server-pc" }),
+            NullLogger<DashboardService>.Instance);
+
+        var snapshot = await dashboard.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Equal("remote-agent", snapshot.System.Hostname);
+        Assert.Equal("api-host", snapshot.ApiSystem!.Hostname);
+        Assert.Equal("192.168.0.18", Assert.Single(snapshot.ApiSystem.NetworkInterfaces!).Address);
     }
 
     [Fact]
