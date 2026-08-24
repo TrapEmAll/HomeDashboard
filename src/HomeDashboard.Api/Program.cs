@@ -39,6 +39,11 @@ builder.Services.AddHttpClient("operations", client =>
     client.Timeout = TimeSpan.FromSeconds(8);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("HomeDashboard/0.1");
 }).ConfigurePrimaryHttpMessageHandler(CreateOptimizedHandler);
+builder.Services.AddHttpClient("command-center", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("HomeDashboard/1.0");
+}).ConfigurePrimaryHttpMessageHandler(CreateOptimizedHandler);
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
@@ -70,6 +75,7 @@ builder.Services.AddSingleton<ILocalSettingsWriter, LocalSettingsWriter>();
 builder.Services.AddSingleton<IAgentLocalSettingsWriter, AgentLocalSettingsWriter>();
 builder.Services.AddSingleton<IOpmlImportService, OpmlImportService>();
 builder.Services.AddSingleton<IOperationsService, OperationsService>();
+builder.Services.AddSingleton<ICommandCenterService, CommandCenterService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
@@ -123,14 +129,15 @@ app.MapPost("/setup", async (SetupRequest request, ISetupService setup, Cancella
         return Results.BadRequest(new { error = ex.Message });
     }
 });
-app.MapPost("/auth/login", (LoginRequest request, IApiKeyValidator validator, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
+app.MapPost("/auth/login", (LoginRequest request, IApiKeyValidator validator, IBrowserSessionStore sessions, ICommandCenterService commandCenter, IOptions<DashboardSecurityOptions> options, HttpContext context) =>
 {
-    if (!validator.IsDashboardPasswordValid(request.Password))
+    var profile = commandCenter.AuthenticateProfile(request.Username, request.Password);
+    if (!validator.IsDashboardPasswordValid(request.Password) && profile is null)
     {
         return Results.Unauthorized();
     }
 
-    var session = sessions.Create(out var token);
+    var session = sessions.Create(out var token, profile?.Id ?? "owner", profile?.DisplayName ?? "Owner", profile?.Role ?? "Administrator");
     context.Response.Cookies.Append(options.Value.SessionCookieName, token, new CookieOptions
     {
         HttpOnly = true,
@@ -184,6 +191,54 @@ app.MapGet("/api/audit", (IAgentCommandStore commands) => Results.Ok(commands.Ge
 app.MapGet("/api/commands", (IAgentCommandStore commands) => Results.Ok(commands.GetRecentCommands(50)));
 app.MapGet("/api/operations", async (IOperationsService operations, CancellationToken cancellationToken)
     => Results.Ok(await operations.GetSnapshotAsync(cancellationToken)));
+app.MapGet("/api/command-center", async (ICommandCenterService commandCenter, CancellationToken cancellationToken)
+    => Results.Ok(await commandCenter.GetSnapshotAsync(cancellationToken)));
+app.MapPost("/api/command-center/items", (CommandCenterItemRequest request, ICommandCenterService commandCenter, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> security, HttpContext context) =>
+{
+    var session = sessions.Get(context.Request.Cookies[security.Value.SessionCookieName]);
+    if (request.Kind.Equals("profile", StringComparison.OrdinalIgnoreCase) && session.IsAuthenticated && !string.Equals(session.Role, "Administrator", StringComparison.OrdinalIgnoreCase))
+        return Results.Forbid();
+    try { return Results.Ok(commandCenter.Upsert(request)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapDelete("/api/command-center/items/{kind}/{id}", (string kind, string id, ICommandCenterService commandCenter, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> security, HttpContext context) =>
+{
+    var session = sessions.Get(context.Request.Cookies[security.Value.SessionCookieName]);
+    if (kind.Equals("profile", StringComparison.OrdinalIgnoreCase) && session.IsAuthenticated && !string.Equals(session.Role, "Administrator", StringComparison.OrdinalIgnoreCase))
+        return Results.Forbid();
+    return commandCenter.Delete(kind, id) ? Results.NoContent() : Results.NotFound();
+});
+app.MapPost("/api/command-center/actions", async (CommandCenterActionRequest request, ICommandCenterService commandCenter, IBrowserSessionStore sessions, IOptions<DashboardSecurityOptions> security, HttpContext context, CancellationToken cancellationToken) =>
+{
+    var session = sessions.Get(context.Request.Cookies[security.Value.SessionCookieName]);
+    if (request.Tool.StartsWith("machine.", StringComparison.OrdinalIgnoreCase) && session.IsAuthenticated && !string.Equals(session.Role, "Administrator", StringComparison.OrdinalIgnoreCase))
+        return Results.Forbid();
+    var result = await commandCenter.ExecuteAsync(request, cancellationToken);
+    return result.Succeeded ? Results.Ok(result) : result.RequiresConfirmation ? Results.Json(result, statusCode: StatusCodes.Status409Conflict) : Results.BadRequest(result);
+});
+app.MapGet("/api/command-center/search", (string? q, ICommandCenterService commandCenter)
+    => Results.Ok(commandCenter.Search(q ?? "")));
+app.MapPost("/api/command-center/assistant", async (AssistantRequest request, ICommandCenterService commandCenter, CancellationToken cancellationToken) =>
+{
+    try { return Results.Ok(await commandCenter.AskAsync(request, cancellationToken)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPut("/api/command-center/integrations/{id}", (string id, UpdateIntegrationRequest request, ICommandCenterService commandCenter) =>
+{
+    try { return Results.Ok(commandCenter.UpdateIntegration(id, request)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapPost("/api/command-center/webhooks", (CommandCenterWebhook webhook, ICommandCenterService commandCenter)
+    => Results.Accepted("/api/command-center", commandCenter.Ingest(webhook)));
+app.MapPost("/api/command-center/webhooks/{source}", (string source, CommandCenterWebhook webhook, ICommandCenterService commandCenter)
+    => Results.Accepted("/api/command-center", commandCenter.Ingest(webhook with { Source = source })));
+app.MapGet("/api/command-center/files", (string? path, ICommandCenterService commandCenter) =>
+{
+    try { return Results.Ok(commandCenter.BrowseFiles(path)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapGet("/api/command-center/logs", async (int? count, ICommandCenterService commandCenter, CancellationToken cancellationToken)
+    => Results.Ok(await commandCenter.GetSystemLogsAsync(count ?? 80, cancellationToken)));
 app.MapPost("/api/downloads/control", async (DownloadControlRequest request, IOperationsService operations, CancellationToken cancellationToken)
     => await operations.ControlDownloadAsync(request, cancellationToken)
         ? Results.Ok(new { message = $"{request.Action} request accepted." })
@@ -204,13 +259,14 @@ app.MapPost("/api/maintenance", (CreateMaintenanceWindowRequest request, IOperat
 });
 app.MapDelete("/api/maintenance/{id}", (string id, IOperationsService operations)
     => operations.RemoveMaintenance(id) ? Results.NoContent() : Results.NotFound());
-app.MapGet("/api/backup", (ISetupService setup, IOperationsService operations) => Results.Ok(new DashboardBackup(
+app.MapGet("/api/backup", (ISetupService setup, IOperationsService operations, ICommandCenterService commandCenter) => Results.Ok(new DashboardBackup(
     1,
     DateTimeOffset.UtcNow,
     setup.GetSettings(),
     operations.GetMaintenance(),
-    typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.1.0")));
-app.MapPost("/api/backup/restore", async (DashboardBackup backup, ISetupService setup, IOperationsService operations, CancellationToken cancellationToken) =>
+    typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.1.0",
+    commandCenter.Export())));
+app.MapPost("/api/backup/restore", async (DashboardBackup backup, ISetupService setup, IOperationsService operations, ICommandCenterService commandCenter, CancellationToken cancellationToken) =>
 {
     if (backup.FormatVersion != 1 || backup.Settings is null || backup.Maintenance is null)
     {
@@ -229,6 +285,11 @@ app.MapPost("/api/backup/restore", async (DashboardBackup backup, ISetupService 
         backup.Settings.NewsFeeds);
     await setup.UpdateSettingsAsync(request, cancellationToken);
     operations.ReplaceMaintenance(backup.Maintenance);
+    if (backup.CommandCenter is not null)
+    {
+        try { commandCenter.Restore(backup.CommandCenter); }
+        catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    }
     return Results.Ok(new { message = "Backup restored. Restart the API to apply configuration changes.", requiresRestart = true });
 });
 app.MapGet("/api/events", async (IDashboardService dashboard, HttpContext context, CancellationToken cancellationToken) =>

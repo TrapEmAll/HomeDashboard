@@ -135,11 +135,15 @@ public enum RestartState
 }
 
 public sealed record LoginRequest(
-    string Password);
+    string Password,
+    string? Username = null);
 
 public sealed record AuthSession(
     bool IsAuthenticated,
-    DateTimeOffset? ExpiresAt);
+    DateTimeOffset? ExpiresAt,
+    string? ProfileId = null,
+    string? DisplayName = null,
+    string? Role = null);
 
 public sealed record AgentCommand(
     string Id,
@@ -155,7 +159,11 @@ public sealed record AgentCommand(
 
 public enum AgentCommandKind
 {
-    RestartService
+    RestartService,
+    LockComputer,
+    SleepComputer,
+    RestartComputer,
+    ShutdownComputer
 }
 
 public enum AgentCommandState
@@ -430,4 +438,5 @@ public sealed record DashboardBackup(
     DateTimeOffset CreatedAt,
     DashboardSettings Settings,
     IReadOnlyList<MaintenanceWindow> Maintenance,
-    string ApplicationVersion);
+    string ApplicationVersion,
+    CommandCenterArchive? CommandCenter = null);

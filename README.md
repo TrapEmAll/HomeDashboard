@@ -1,8 +1,10 @@
 # HomeDashboard
 
-HomeDashboard is a Windows-friendly homelab dashboard monorepo for monitoring services running on another PC. It includes an ASP.NET Core API that serves the React dashboard, a Windows-focused .NET agent, shared contracts, tests, docs, configurable service cards, RSS news, persisted agent history, first-run setup, browser login, alerts, audit history, live updates, and guarded restart commands.
+HomeDashboard is a Windows-friendly personal command center and homelab dashboard. Its ASP.NET Core API serves a React application, a Windows .NET agent reports host telemetry and executes explicitly enabled controls, and shared contracts and tests keep the complete system aligned.
 
-The dashboard command center includes a dark responsive service wall, live health filtering and search, persistent favorites, compact and comfortable density modes, a hideable activity rail, recent health pulse history, richer storage details, and session-expiry recovery. Its operations workspace adds a unified activity timeline, Plex sessions, Sonarr/Radarr calendar, qBittorrent and SABnzbd queues, incident and dependency views, maintenance windows, storage planning, service discovery, browser alerts, opt-in local weather, and configuration backup/restore. The intelligence reader adds article and podcast playback, artwork, source/topic/age/read filters, deterministic sorting, bookmarks, read and hidden state, sharing, paging, and grid/list density choices. Display preferences and reading state are stored only in the current browser.
+The new **Command** workspace adds a daily briefing, calendar, personal tasks, notes, shopping, package tracking, media requests, a persistent priority inbox, global search, voice input, a local-assistant connector, modes, household profiles and roles, home controls, systems inventory, Windows file/log tools, Wake-on-LAN, guarded machine controls, automation rules, and a 20-connector integration catalog. It is installable as a PWA and has responsive phone and wall-display layouts. See [docs/command-center.md](docs/command-center.md).
+
+The service wall retains live health filtering and search, favorites, density modes, activity, health history, storage details, and session recovery. Operations covers Plex sessions, Sonarr/Radarr calendars, download queues, incidents, dependencies, maintenance, storage planning, discovery, weather, and backup/restore. Intelligence provides RSS and podcast playback, OPML import, artwork, filters, sorting, bookmarks, read/hidden state, sharing, and paging.
 
 ## Repository layout
 
@@ -48,6 +50,16 @@ The API exposes:
 - `POST /api/maintenance`
 - `GET /api/backup`
 - `POST /api/backup/restore`
+- `GET /api/command-center`
+- `POST /api/command-center/items`
+- `DELETE /api/command-center/items/{kind}/{id}`
+- `POST /api/command-center/actions`
+- `GET /api/command-center/search`
+- `POST /api/command-center/assistant`
+- `PUT /api/command-center/integrations/{id}`
+- `POST /api/command-center/webhooks/{source}`
+- `GET /api/command-center/files`
+- `GET /api/command-center/logs`
 - `GET /api/commands`
 - `POST /api/agent/snapshot`
 - `GET /api/agents`
@@ -96,7 +108,7 @@ The package is written to `outputs/HomeDashboard-Windows.zip`. It contains:
 - `tools/update-homedashboard.ps1`, an updater that downloads a GitHub branch, preserves local config/data, rebuilds, reinstalls, and restarts the services.
 - `tools/open-elevated-update.ps1`, a launcher that opens an elevated PowerShell window in the current source folder and runs the updater.
 
-Before changing files, the updater writes a timestamped durable backup under `backups/` containing packaged and source-local configuration and data. It also stages the previous runnable package and automatically restores it, restores user state, and restarts the existing services if downloading, publishing, or installation fails. Successful-update backups are retained for manual recovery. Direct runs of `publish-windows.ps1` independently back up and restore packaged configuration and data, including on build failure.
+Before changing files, the updater writes a timestamped durable backup under `backups/` containing packaged and source-local configuration and the complete `data` directory. This includes command-center tasks, calendar, profiles, integration settings, and activity. It also stages the previous runnable package and automatically restores it, user state, and services if downloading, publishing, or installation fails. Successful-update backups are retained. Direct runs of `publish-windows.ps1` apply the same protection.
 
 Update an existing source-based install from GitHub with:
 
@@ -137,6 +149,8 @@ Invoke-WebRequest "https://raw.githubusercontent.com/TrapEmAll/HomeDashboard/mai
 ```
 
 Restart controls require browser confirmation, queue commands for `Dashboard:DefaultAgentId`, and write audit events for queued, rejected, and completed commands. The agent only executes a restart when the matching `Agent:WindowsServices` entry exists and has `RestartEnabled: true`.
+
+Lock, sleep, restart, and shutdown controls require an Administrator profile, an in-browser confirmation, and `Agent:MachineActionsEnabled: true`. They are disabled by default.
 
 ## MVP boundaries
 

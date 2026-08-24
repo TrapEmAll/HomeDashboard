@@ -50,6 +50,8 @@ public interface IAgentSnapshotStore
 public interface IAgentCommandStore
 {
     AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request);
+    AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request)
+        => throw new NotSupportedException("Machine commands are not supported by this command store.");
     AgentCommand? DequeueNext(string agentId);
     void Complete(string agentId, string commandId, AgentCommandCompletion completion);
     IReadOnlyList<AgentCommand> GetRecentCommands(int count);
@@ -369,6 +371,25 @@ public sealed class FileDashboardStateStore : IAgentSnapshotStore, IAgentCommand
             SaveLocked();
         }
 
+        return command;
+    }
+
+    public AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request)
+    {
+        if (kind == AgentCommandKind.RestartService)
+        {
+            throw new InvalidOperationException("Use the service restart queue for service commands.");
+        }
+
+        var command = new AgentCommand(Guid.NewGuid().ToString("n"), agentId, kind, "machine", request.RequestedBy,
+            request.Reason, DateTimeOffset.UtcNow, AgentCommandState.Queued);
+        lock (gate)
+        {
+            state.Commands.Add(command);
+            AddAuditEventLocked(new AuditEvent(Guid.NewGuid().ToString("n"), AuditEventType.RestartQueued,
+                $"{kind} queued for agent {agentId}.", null, agentId, request.RequestedBy, command.RequestedAt, command.Id));
+            SaveLocked();
+        }
         return command;
     }
 

@@ -143,6 +143,8 @@ For deployed web builds served by the API executable, no frontend secret is need
 
 The API stores latest agent snapshots, rolling history, queued command state, and restart audit history in `Dashboard:DataPath`.
 
+Personal command-center data is stored beside that file as `homedashboard-command-center.json`. The Windows publisher and updater preserve the entire containing `data` directory. Dashboard backup exports include command-center data and non-secret connector settings; connector secrets and household password hashes stay local during restore.
+
 ```json
 {
   "Dashboard": {
@@ -214,6 +216,18 @@ VITE_API_BASE_URL=https://your-dashboard-api
 ```
 
 The API uses `Dashboard:DefaultAgentId` to decide which agent snapshot should drive dashboard system stats and where restart commands should be queued. A restart command requires browser confirmation and only runs when both the API service card and the agent service entry have `RestartEnabled: true`.
+
+Machine-level controls are separately disabled by default. To allow lock, sleep, restart, or shutdown requests from an Administrator profile, set this only on the target agent:
+
+```json
+{
+  "Agent": {
+    "MachineActionsEnabled": true
+  }
+}
+```
+
+Every power action requires a second confirmation in the dashboard and is written to command-center activity. Leave this setting disabled when the dashboard is exposed outside a trusted network.
 
 Saving first-run setup synchronizes the generated agent key and default agent ID into the packaged agent's `appsettings.Local.json`. The Windows installer repeats this synchronization during installs and updates while preserving other agent settings. The agent watches this local file for changes, so credential corrections do not require republishing the executable.
 

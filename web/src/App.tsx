@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { Activity, Bell, CheckCircle2, Clock3, Columns3, Gauge, History, LayoutGrid, LogOut, PanelRightClose, PanelRightOpen, RefreshCw, Search, Server, Settings, ShieldCheck, Signal, TriangleAlert, Wand2, X } from "lucide-react";
 import { ApiError, dashboardEventsUrl, getAgentHistory, getDashboard, getDashboardSettings, getSession, getSetupStatus, login, logout, parseDashboardSnapshot, requestRestart, saveSetup, updateDashboardSettings } from "./lib/api";
 import { NewsPanel } from "./components/NewsPanel";
+import { CommandCenter } from "./components/CommandCenter";
 import { OperationsWorkspace } from "./components/OperationsWorkspace";
 import { ServiceGrid } from "./components/ServiceGrid";
 import { SettingsDrawer } from "./components/SettingsDrawer";
@@ -18,6 +19,7 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [signingIn, setSigningIn] = useState(false);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [setupSaving, setSetupSaving] = useState(false);
@@ -210,9 +212,10 @@ export function App() {
     setSigningIn(true);
     setError(null);
     try {
-      const session = await login(password);
+      const session = await login(password, username);
       setAuthenticated(session.isAuthenticated);
       setPassword("");
+      setUsername("");
       await load();
     } catch {
       setError("Sign in failed. Check the dashboard password in API configuration.");
@@ -354,12 +357,18 @@ export function App() {
           <h1>HomeDashboard</h1>
           <p>Sign in to view services and control the remote agent.</p>
           <input
+            aria-label="Household username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            placeholder="Username (owner may leave blank)"
+            autoFocus
+          />
+          <input
             aria-label="Dashboard password"
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder="Dashboard password"
-            autoFocus
           />
           <button type="submit" disabled={signingIn || password.length === 0}>
             {signingIn ? "Signing in..." : "Sign in"}
@@ -407,6 +416,7 @@ export function App() {
         </div>
         <nav className="topbar-nav" aria-label="Dashboard sections">
           <button type="button" onClick={() => document.getElementById("overview")?.scrollIntoView({ behavior: "smooth" })}>Overview</button>
+          <button type="button" onClick={() => document.getElementById("command-center")?.scrollIntoView({ behavior: "smooth" })}>Command</button>
           <button type="button" onClick={() => document.getElementById("services")?.scrollIntoView({ behavior: "smooth" })}>Services</button>
           <button type="button" onClick={() => document.getElementById("activity")?.scrollIntoView({ behavior: "smooth" })}>Activity</button>
           <button type="button" onClick={() => document.getElementById("operations")?.scrollIntoView({ behavior: "smooth" })}>Operations</button>
@@ -547,6 +557,7 @@ export function App() {
               <AuditPanel events={snapshot.recentAuditEvents} />
             </aside> : null}
           </div>
+          <CommandCenter authenticated={authenticated} />
           <OperationsWorkspace authenticated={authenticated} />
           <NewsPanel items={snapshot.news} />
         </>

@@ -7,6 +7,7 @@ public sealed class AgentOptions
     public string? ApiKey { get; init; }
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(30);
     public IReadOnlyList<WindowsServiceMonitor> WindowsServices { get; init; } = [];
+    public bool MachineActionsEnabled { get; init; }
 }
 
 public sealed class WindowsServiceMonitor
