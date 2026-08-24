@@ -301,9 +301,9 @@ public sealed class CommandCenterService : ICommandCenterService
     {
         if (!IntegrationCatalog.TryGetValue(id, out var catalog)) throw new InvalidOperationException("Unknown integration.");
         Uri? parsedUrl = null;
-        if (!string.IsNullOrWhiteSpace(request.BaseUrl) && (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out parsedUrl) || parsedUrl.Scheme is not ("http" or "https")))
+        if (!id.Equals("discord", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(request.BaseUrl)
+            && (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out parsedUrl) || parsedUrl.Scheme is not ("http" or "https")))
             throw new InvalidOperationException("Integration URL must be an absolute HTTP or HTTPS URL.");
-        if (id.Equals("discord", StringComparison.OrdinalIgnoreCase)) parsedUrl = null;
 
         lock (gate)
         {

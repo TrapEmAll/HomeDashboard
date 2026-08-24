@@ -158,18 +158,29 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DiscordIsNotPolledAsGenericJsonConnectorAndDiscardsLegacyEndpoint()
+    public async Task DiscordSettingsPersistAndLegacyEndpointIsIgnored()
     {
         var clientFactory = new RecordingHttpClientFactory();
         var service = CreateService(clientFactory);
         var status = service.UpdateIntegration("discord", new UpdateIntegrationRequest(
-            "Discord", "https://discord.com/developers/applications", true, "bot-token",
-            new Dictionary<string, string> { ["allowedUserIds"] = "123" }));
+            "Discord", "null", true, "bot-token", new Dictionary<string, string>
+            {
+                ["prefix"] = "!home",
+                ["allowedUserIds"] = "123",
+                ["allowedChannelIds"] = "456",
+                ["allowedGuildIds"] = "789"
+            }));
 
         await service.GetSnapshotAsync(CancellationToken.None);
+        var reloaded = CreateService().GetDiscordConfiguration();
 
         Assert.Null(status.BaseUrl);
         Assert.Equal(0, clientFactory.RequestCount);
+        Assert.NotNull(reloaded);
+        Assert.Equal("!home", reloaded.Prefix);
+        Assert.Contains(123UL, reloaded.AllowedUserIds);
+        Assert.Contains(456UL, reloaded.AllowedChannelIds);
+        Assert.Contains(789UL, reloaded.AllowedGuildIds);
     }
 
     private CommandCenterService CreateService(IHttpClientFactory? clientFactory = null)
