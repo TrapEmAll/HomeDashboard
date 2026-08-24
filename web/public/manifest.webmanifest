@@ -1,0 +1,10 @@
+{
+  "name": "HomeDashboard Command Center",
+  "short_name": "HomeDashboard",
+  "description": "Personal home, media, planning, and infrastructure command center",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07100f",
+  "theme_color": "#0b1715",
+  "orientation": "any"
+}

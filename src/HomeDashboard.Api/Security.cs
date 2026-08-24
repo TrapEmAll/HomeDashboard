@@ -72,7 +72,7 @@ public sealed class ApiKeyValidator(IOptions<DashboardSecurityOptions> options) 
 
 public interface IBrowserSessionStore
 {
-    AuthSession Create(out string token);
+    AuthSession Create(out string token, string? profileId = null, string? displayName = null, string? role = null);
     AuthSession Get(string? token);
     void Remove(string? token);
 }
@@ -80,9 +80,9 @@ public interface IBrowserSessionStore
 public sealed class InMemoryBrowserSessionStore(IOptions<DashboardSecurityOptions> options) : IBrowserSessionStore
 {
     private readonly object gate = new();
-    private readonly Dictionary<string, DateTimeOffset> sessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, AuthSession> sessions = new(StringComparer.Ordinal);
 
-    public AuthSession Create(out string token)
+    public AuthSession Create(out string token, string? profileId = null, string? displayName = null, string? role = null)
     {
         var tokenBytes = RandomNumberGenerator.GetBytes(32);
         token = Convert.ToBase64String(tokenBytes);
@@ -90,10 +90,10 @@ public sealed class InMemoryBrowserSessionStore(IOptions<DashboardSecurityOption
 
         lock (gate)
         {
-            sessions[token] = expiresAt;
+            sessions[token] = new AuthSession(true, expiresAt, profileId, displayName, role);
         }
 
-        return new AuthSession(true, expiresAt);
+        return new AuthSession(true, expiresAt, profileId, displayName, role);
     }
 
     public AuthSession Get(string? token)
@@ -105,18 +105,18 @@ public sealed class InMemoryBrowserSessionStore(IOptions<DashboardSecurityOption
 
         lock (gate)
         {
-            if (!sessions.TryGetValue(token, out var expiresAt))
+            if (!sessions.TryGetValue(token, out var session))
             {
                 return new AuthSession(false, null);
             }
 
-            if (expiresAt <= DateTimeOffset.UtcNow)
+            if (session.ExpiresAt <= DateTimeOffset.UtcNow)
             {
                 sessions.Remove(token);
                 return new AuthSession(false, null);
             }
 
-            return new AuthSession(true, expiresAt);
+            return session;
         }
     }
 
@@ -149,9 +149,10 @@ public sealed class ApiKeyMiddleware(RequestDelegate next)
         }
 
         var apiKey = context.Request.Headers["X-HomeDashboard-Key"].FirstOrDefault();
-        var isValid = RequiresAgentKey(context)
-            ? validator.IsAgentKeyValid(apiKey)
-            : validator.IsDashboardKeyValid(apiKey) || sessions.Get(context.Request.Cookies[options.Value.SessionCookieName]).IsAuthenticated;
+        var session = sessions.Get(context.Request.Cookies[options.Value.SessionCookieName]);
+        var validApiKey = RequiresAgentKey(context) ? validator.IsAgentKeyValid(apiKey) : validator.IsDashboardKeyValid(apiKey);
+        var isValid = validApiKey
+            || (!RequiresAgentKey(context) && session.IsAuthenticated);
 
         if (!isValid)
         {
@@ -160,7 +161,25 @@ public sealed class ApiKeyMiddleware(RequestDelegate next)
             return;
         }
 
+        if (!validApiKey && !IsRoleAuthorized(context, session.Role))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { error = "This household role cannot perform that action." });
+            return;
+        }
+
         await next(context);
+    }
+
+    private static bool IsRoleAuthorized(HttpContext context, string? role)
+    {
+        if (role is null || role.Equals("Administrator", StringComparison.OrdinalIgnoreCase)) return true;
+        if (role.Equals("Viewer", StringComparison.OrdinalIgnoreCase)) return HttpMethods.IsGet(context.Request.Method);
+        if (!role.Equals("Member", StringComparison.OrdinalIgnoreCase)) return false;
+        if (context.Request.Path.StartsWithSegments("/api/settings") || context.Request.Path.StartsWithSegments("/api/agent")) return false;
+        if (context.Request.Path.StartsWithSegments("/api/backup") && !HttpMethods.IsGet(context.Request.Method)) return false;
+        if (context.Request.Path.StartsWithSegments("/api/services") && !HttpMethods.IsGet(context.Request.Method)) return false;
+        return !context.Request.Path.StartsWithSegments("/api/command-center/integrations");
     }
 
     private static bool RequiresAgentKey(HttpContext context)

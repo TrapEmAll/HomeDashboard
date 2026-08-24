@@ -1,8 +1,10 @@
 import type { AgentHistoryPoint, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
+import type { AssistantResponse, CommandCenterActionRequest, CommandCenterActionResult, CommandCenterItemRequest, CommandCenterSnapshot, FileWorkspaceEntry, IntegrationStatus, SearchResult, SystemLogEntry } from "../types/commandCenter";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 let dashboardRequest: Promise<DashboardSnapshot> | null = null;
 let operationsRequest: Promise<OperationsSnapshot> | null = null;
+let commandCenterRequest: Promise<CommandCenterSnapshot> | null = null;
 
 export class ApiError extends Error {
   public constructor(public readonly status: number, message: string) {
@@ -14,6 +16,9 @@ export class ApiError extends Error {
 export interface AuthSession {
   isAuthenticated: boolean;
   expiresAt?: string | null;
+  profileId?: string | null;
+  displayName?: string | null;
+  role?: string | null;
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -30,12 +35,12 @@ export async function getSession(): Promise<AuthSession> {
   return readJson<AuthSession>(response);
 }
 
-export async function login(password: string): Promise<AuthSession> {
+export async function login(password: string, username?: string): Promise<AuthSession> {
   const response = await fetch(`${apiBaseUrl}/auth/login`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password })
+    body: JSON.stringify({ password, username: username || null })
   });
 
   return readJson<AuthSession>(response);
@@ -141,6 +146,63 @@ export function getOperations(): Promise<OperationsSnapshot> {
     .then((response) => readJson<OperationsSnapshot>(response))
     .finally(() => { operationsRequest = null; });
   return operationsRequest;
+}
+
+export function getCommandCenter(): Promise<CommandCenterSnapshot> {
+  if (commandCenterRequest) return commandCenterRequest;
+  commandCenterRequest = fetch(`${apiBaseUrl}/api/command-center`, { credentials: "include" })
+    .then((response) => readJson<CommandCenterSnapshot>(response))
+    .finally(() => { commandCenterRequest = null; });
+  return commandCenterRequest;
+}
+
+export async function saveCommandCenterItem(request: CommandCenterItemRequest): Promise<CommandCenterSnapshot> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/items`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request)
+  });
+  return readJson<CommandCenterSnapshot>(response);
+}
+
+export async function deleteCommandCenterItem(kind: string, id: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/items/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  if (!response.ok && response.status !== 204) throw new ApiError(response.status, `Delete failed with ${response.status}`);
+}
+
+export async function runCommandCenterAction(request: CommandCenterActionRequest): Promise<CommandCenterActionResult> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/actions`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request)
+  });
+  if (response.status === 409) return response.json() as Promise<CommandCenterActionResult>;
+  return readJson<CommandCenterActionResult>(response);
+}
+
+export async function searchCommandCenter(query: string): Promise<SearchResult[]> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/search?q=${encodeURIComponent(query)}`, { credentials: "include" });
+  return readJson<SearchResult[]>(response);
+}
+
+export async function askAssistant(message: string): Promise<AssistantResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/assistant`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, allowActions: false })
+  });
+  return readJson<AssistantResponse>(response);
+}
+
+export async function updateCommandCenterIntegration(id: string, request: { name: string; baseUrl?: string | null; enabled: boolean; secret?: string | null; settings?: Record<string, string>; clearSecret?: boolean }): Promise<IntegrationStatus> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/integrations/${encodeURIComponent(id)}`, {
+    method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request)
+  });
+  return readJson<IntegrationStatus>(response);
+}
+
+export async function browseCommandCenterFiles(path?: string): Promise<FileWorkspaceEntry[]> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/files${path ? `?path=${encodeURIComponent(path)}` : ""}`, { credentials: "include" });
+  return readJson<FileWorkspaceEntry[]>(response);
+}
+
+export async function getCommandCenterLogs(): Promise<SystemLogEntry[]> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/logs?count=100`, { credentials: "include" });
+  return readJson<SystemLogEntry[]>(response);
 }
 
 export async function controlDownload(source: string, itemId: string, action: DownloadControlAction, deleteData = false): Promise<void> {
