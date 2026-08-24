@@ -92,6 +92,32 @@ public sealed class OperationsServiceTests
         Assert.Contains(audit.Events, item => item.Type == AuditEventType.MediaCommand && item.Succeeded && item.Actor == "owner");
     }
 
+    [Fact]
+    public async Task Snapshot_omits_failed_optional_sources_instead_of_failing_the_workspace()
+    {
+        var options = new DashboardOptions
+        {
+            IncludeRecommendedFeeds = false,
+            DataPath = Path.Combine(Path.GetTempPath(), "homedashboard-tests", Guid.NewGuid().ToString("n"), "state.json"),
+            Services =
+            [
+                new ServiceDefinition { Id = "plex", Name = "Plex", Kind = ServiceKind.Plex, Url = new Uri("http://plex.local:32400"), ApiKey = "plex-key" },
+                new ServiceDefinition { Id = "sonarr", Name = "Sonarr", Kind = ServiceKind.Sonarr, Url = new Uri("http://sonarr.local:8989"), ApiKey = "sonarr-key" },
+                new ServiceDefinition { Id = "qbit", Name = "qBittorrent", Kind = ServiceKind.qBittorrent, Url = new Uri("http://qbit.local:8080") }
+            ]
+        };
+        var service = new OperationsService(Options.Create(options), new CountingServiceProvider(), new AuditStore(),
+            new StubClientFactory(new ThrowingHandler()), NullLogger<OperationsService>.Instance);
+
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Empty(snapshot.Calendar);
+        Assert.Empty(snapshot.PlaybackSessions);
+        Assert.Empty(snapshot.Downloads);
+        Assert.Empty(snapshot.Arr.Instances);
+        Assert.NotNull(snapshot.Storage);
+    }
+
     private static DashboardOptions ArrOptions() => new()
     {
         IncludeRecommendedFeeds = false,
@@ -199,5 +225,11 @@ public sealed class OperationsServiceTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+    }
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new InvalidOperationException($"Unexpected response shape from {request.RequestUri?.Host}.");
     }
 }
