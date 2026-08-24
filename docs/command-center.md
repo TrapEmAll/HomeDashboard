@@ -52,17 +52,31 @@ Discord connects outbound from the API through the Discord gateway, so no new in
 
 The bot ignores every user not present in the user allowlist. It will not connect when that list is empty. IDs may be separated by commas, spaces, or semicolons. After saving, the connector status changes to the bot username when the gateway is ready.
 
+HomeDashboard registers a guided `/home` slash command after connecting. Discord shows its command groups, descriptions, choices, and matching dashboard items while you type. Configure at least one allowed server ID for server-scoped commands that appear immediately. With no server IDs, the bot registers globally and Discord may take time to distribute a new command. Slash replies are private to the caller and still enforce the configured user, channel, and server allowlists.
+
+`/home` supports task, shopping, calendar, note, package, media, inbox, reminder, automation, device, and system groups. You can add, list, complete, acknowledge, snooze, search, or remove relevant items; inspect integrations, assets, profiles, activity, and Home Assistant devices; run automations; create reminders; and change household mode. Existing-item fields autocomplete against HomeDashboard data. Device control requires an explicit confirmation option. Windows lock, sleep, restart, and shutdown commands are intentionally not exposed through Discord.
+
 Default commands use the `!hd` prefix:
 
 ```text
 !hd shopping add milk, bread | Groceries
 !hd shopping done milk
+!hd shopping list
 !hd task add Renew certificate | 2026-09-01 18:00 | High | Home
 !hd task done renew certificate
+!hd task list
 !hd agenda add Dentist | 2026-09-03 14:00 | Downtown
 !hd note add Project idea | Details
 !hd package add Keyboard | UPS | 1Z... | 2026-09-04
 !hd media add Dune Part Two | Movie
+!hd inbox list
+!hd reminder add Check UPS | Replace battery this weekend
+!hd automations list
+!hd devices list
+!hd mode set Away
+!hd search certificate
+!hd integrations list
+!hd assets list
 !hd status
 !hd help
 ```
