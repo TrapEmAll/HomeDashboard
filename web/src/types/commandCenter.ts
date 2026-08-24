@@ -10,7 +10,7 @@ export interface TrackedPackage { id: string; carrier: string; trackingNumber: s
 export interface MediaRequestItem { id: string; title: string; mediaType: string; status: string; requestedBy: string; requestedAt: string; artworkUrl?: string | null; }
 export interface NotificationAction { label: string; tool: string; target?: string | null; requiresConfirmation: boolean; }
 export interface CommandCenterNotification { id: string; severity: Severity; source: string; title: string; message: string; createdAt: string; acknowledged: boolean; snoozedUntil?: string | null; actions?: NotificationAction[] | null; }
-export interface IntegrationStatus { id: string; kind: string; name: string; enabled: boolean; connected: boolean; status: string; lastCheckedAt?: string | null; capabilities: string[]; baseUrl?: string | null; hasSecret: boolean; }
+export interface IntegrationStatus { id: string; kind: string; name: string; enabled: boolean; connected: boolean; status: string; lastCheckedAt?: string | null; capabilities: string[]; baseUrl?: string | null; hasSecret: boolean; settings: Record<string, string>; }
 export interface HomeEntity { id: string; name: string; domain: string; state: string; area?: string | null; attributes: Record<string, string>; updatedAt: string; }
 export interface OperationalAsset { id: string; category: string; name: string; status: string; detail?: string | null; metrics: Record<string, string>; updatedAt: string; url?: string | null; }
 export interface AutomationRule { id: string; name: string; trigger: string; condition?: string | null; actionTool: string; actionTarget?: string | null; enabled: boolean; lastRunAt?: string | null; lastResult?: string | null; }

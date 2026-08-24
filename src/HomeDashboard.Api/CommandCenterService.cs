@@ -303,6 +303,7 @@ public sealed class CommandCenterService : ICommandCenterService
         Uri? parsedUrl = null;
         if (!string.IsNullOrWhiteSpace(request.BaseUrl) && (!Uri.TryCreate(request.BaseUrl, UriKind.Absolute, out parsedUrl) || parsedUrl.Scheme is not ("http" or "https")))
             throw new InvalidOperationException("Integration URL must be an absolute HTTP or HTTPS URL.");
+        if (id.Equals("discord", StringComparison.OrdinalIgnoreCase)) parsedUrl = null;
 
         lock (gate)
         {
@@ -540,7 +541,7 @@ public sealed class CommandCenterService : ICommandCenterService
         lock (gate)
         {
             integrations = state.Integrations.Where(item => item.Enabled && item.BaseUrl is not null
-                && item.Id is not ("home-assistant" or "ntfy" or "ollama" or "webhook" or "mqtt")).ToArray();
+                && item.Id is not ("home-assistant" or "ntfy" or "ollama" or "webhook" or "mqtt" or "discord")).ToArray();
         }
 
         await Parallel.ForEachAsync(integrations, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken }, async (integration, token) =>
@@ -793,7 +794,8 @@ public sealed class CommandCenterService : ICommandCenterService
         if (index >= 0) state.Integrations[index] = state.Integrations[index] with { Connected = connected, Status = Limit(status, 300), LastCheckedAt = DateTimeOffset.UtcNow };
     }
     private static IntegrationStatus ToStatus(IntegrationConfig item) => new(item.Id, item.Kind, item.Name, item.Enabled, item.Connected, item.Status, item.LastCheckedAt,
-        IntegrationCatalog.GetValueOrDefault(item.Id).Capabilities ?? [], item.BaseUrl, !string.IsNullOrWhiteSpace(item.Secret));
+        IntegrationCatalog.GetValueOrDefault(item.Id).Capabilities ?? [], item.BaseUrl, !string.IsNullOrWhiteSpace(item.Secret),
+        new Dictionary<string, string>(item.Settings, StringComparer.OrdinalIgnoreCase));
     private void RecordExternalActivity(string tool, string? target, CommandCenterActionResult result)
     {
         lock (gate) { state.Activity.Add(new(Guid.NewGuid().ToString("n"), tool, target, result.Message, DateTimeOffset.UtcNow, result.Succeeded)); Trim(state.Activity, 500); SaveLocked(); }

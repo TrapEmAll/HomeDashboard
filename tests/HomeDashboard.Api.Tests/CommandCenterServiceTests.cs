@@ -153,13 +153,30 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Equal("!home", configuration.Prefix);
         Assert.Contains(123UL, configuration.AllowedUserIds);
         Assert.Contains(789UL, configuration.AllowedChannelIds);
+        Assert.Equal("!home", service.UpdateIntegration("discord", new UpdateIntegrationRequest(
+            "Discord", null, true, null)).Settings["prefix"]);
     }
 
-    private CommandCenterService CreateService()
+    [Fact]
+    public async Task DiscordIsNotPolledAsGenericJsonConnectorAndDiscardsLegacyEndpoint()
+    {
+        var clientFactory = new RecordingHttpClientFactory();
+        var service = CreateService(clientFactory);
+        var status = service.UpdateIntegration("discord", new UpdateIntegrationRequest(
+            "Discord", "https://discord.com/developers/applications", true, "bot-token",
+            new Dictionary<string, string> { ["allowedUserIds"] = "123" }));
+
+        await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Null(status.BaseUrl);
+        Assert.Equal(0, clientFactory.RequestCount);
+    }
+
+    private CommandCenterService CreateService(IHttpClientFactory? clientFactory = null)
     {
         Directory.CreateDirectory(directory);
         var options = Options.Create(new DashboardOptions { DataPath = Path.Combine(directory, "homedashboard-state.json") });
-        return new CommandCenterService(options, new StaticHttpClientFactory(), new NoopCommandStore(), NullLogger<CommandCenterService>.Instance);
+        return new CommandCenterService(options, clientFactory ?? new StaticHttpClientFactory(), new NoopCommandStore(), NullLogger<CommandCenterService>.Instance);
     }
 
     public void Dispose()
@@ -171,6 +188,25 @@ public sealed class CommandCenterServiceTests : IDisposable
     private sealed class StaticHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(new HttpClientHandler());
+    }
+
+    private sealed class RecordingHttpClientFactory : IHttpClientFactory
+    {
+        public int RequestCount { get; private set; }
+
+        public HttpClient CreateClient(string name) => new(new RecordingHandler(() => RequestCount++));
+
+        private sealed class RecordingHandler(Action onRequest) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                onRequest();
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<html>not json</html>")
+                });
+            }
+        }
     }
 
     private sealed class NoopCommandStore : IAgentCommandStore
