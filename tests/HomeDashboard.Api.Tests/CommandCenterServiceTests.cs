@@ -113,6 +113,48 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.DoesNotContain("source-secret", System.Text.Json.JsonSerializer.Serialize(archive));
     }
 
+    [Fact]
+    public async Task DiscordCommandsAddAndCompleteRemoteListItems()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service);
+
+        var shopping = await processor.ProcessAsync("shopping add milk, bread | Groceries", "Alex", CancellationToken.None);
+        var agenda = await processor.ProcessAsync("agenda add Dentist | 2030-09-03 14:00 | Downtown", "Alex", CancellationToken.None);
+        var task = await processor.ProcessAsync("task add Renew certificate | 2030-09-01 18:00 | High | Home", "Alex", CancellationToken.None);
+        var completed = await processor.ProcessAsync("shopping done milk", "Alex", CancellationToken.None);
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Contains("2 items", shopping);
+        Assert.Contains("Dentist", agenda);
+        Assert.Contains("Renew certificate", task);
+        Assert.Contains("Completed", completed);
+        Assert.Equal(2, snapshot.Shopping.Count);
+        Assert.Contains(snapshot.Shopping, item => item.Name == "milk" && item.Completed);
+        Assert.Contains(snapshot.Calendar, item => item.Title == "Dentist" && item.Location == "Downtown");
+        Assert.Contains(snapshot.Tasks, item => item.Title == "Renew certificate" && item.Priority == ItemPriority.High && item.List == "Home");
+    }
+
+    [Fact]
+    public void DiscordConfigurationRequiresEnabledConnectorAndParsesAllowlists()
+    {
+        var service = CreateService();
+        Assert.Null(service.GetDiscordConfiguration());
+        service.UpdateIntegration("discord", new UpdateIntegrationRequest("Discord", null, true, "bot-token", new Dictionary<string, string>
+        {
+            ["prefix"] = "!home",
+            ["allowedUserIds"] = "123, 456",
+            ["allowedChannelIds"] = "789"
+        }));
+
+        var configuration = service.GetDiscordConfiguration();
+
+        Assert.NotNull(configuration);
+        Assert.Equal("!home", configuration.Prefix);
+        Assert.Contains(123UL, configuration.AllowedUserIds);
+        Assert.Contains(789UL, configuration.AllowedChannelIds);
+    }
+
     private CommandCenterService CreateService()
     {
         Directory.CreateDirectory(directory);

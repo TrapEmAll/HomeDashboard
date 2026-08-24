@@ -76,6 +76,8 @@ builder.Services.AddSingleton<IAgentLocalSettingsWriter, AgentLocalSettingsWrite
 builder.Services.AddSingleton<IOpmlImportService, OpmlImportService>();
 builder.Services.AddSingleton<IOperationsService, OperationsService>();
 builder.Services.AddSingleton<ICommandCenterService, CommandCenterService>();
+builder.Services.AddSingleton<DiscordCommandProcessor>();
+builder.Services.AddHostedService<DiscordBotService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
 builder.Services.AddSingleton<IAgentCommandStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());

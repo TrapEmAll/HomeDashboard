@@ -29,7 +29,7 @@ Passwords are stored as hashes and never returned by the API. Connector secrets 
 
 ## Connectors
 
-The catalog includes Home Assistant, ntfy, Ollama, Microsoft 365, Google, CalDAV, GitHub, UniFi, Pi-hole/AdGuard Home, Overseerr/Jellyseerr, backup systems, UPS/power, cameras, MQTT, package tracking, utilities, game servers, email summary, generic webhooks, and Windows workspace.
+The catalog includes Home Assistant, ntfy, Ollama, Discord, Microsoft 365, Google, CalDAV, GitHub, UniFi, Pi-hole/AdGuard Home, Overseerr/Jellyseerr, backup systems, UPS/power, cameras, MQTT, package tracking, utilities, game servers, email summary, generic webhooks, and Windows workspace.
 
 Home Assistant, ntfy, Ollama, Windows, Wake-on-LAN, and generic HTTP/webhook actions have direct handling. Other systems use the normalized connector adapter so one small bridge can expose data from an existing API without adding vendor credentials to the browser. An enabled connector endpoint may return:
 
@@ -45,6 +45,29 @@ Home Assistant, ntfy, Ollama, Windows, Wake-on-LAN, and generic HTTP/webhook act
 ```
 
 The configured secret is sent as a Bearer token. Inbound events can be posted to `/api/command-center/webhooks/{source}` with `X-HomeDashboard-Key`; events can create notifications or update assets. MQTT actions use an HTTP bridge endpoint, keeping broker libraries and credentials outside the dashboard process.
+
+## Discord remote capture
+
+Discord connects outbound from the API through the Discord gateway, so no new inbound port is required. Create an application and bot in the Discord Developer Portal, enable the **Message Content Intent**, invite the bot to your private server with permission to view and send messages, then open **Command > Connect > Discord**. Save the bot token as the credential and add at least one allowed Discord user ID. Optional channel and server ID lists further restrict access. Discord Developer Mode exposes the **Copy ID** command for users, channels, and servers.
+
+The bot ignores every user not present in the user allowlist. It will not connect when that list is empty. IDs may be separated by commas, spaces, or semicolons. After saving, the connector status changes to the bot username when the gateway is ready.
+
+Default commands use the `!hd` prefix:
+
+```text
+!hd shopping add milk, bread | Groceries
+!hd shopping done milk
+!hd task add Renew certificate | 2026-09-01 18:00 | High | Home
+!hd task done renew certificate
+!hd agenda add Dentist | 2026-09-03 14:00 | Downtown
+!hd note add Project idea | Details
+!hd package add Keyboard | UPS | 1Z... | 2026-09-04
+!hd media add Dune Part Two | Movie
+!hd status
+!hd help
+```
+
+Dates are interpreted in the API computer's local culture and time zone. The command prefix can be changed in the Discord connector.
 
 ## Windows controls
 
