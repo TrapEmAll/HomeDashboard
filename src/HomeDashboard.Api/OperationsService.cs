@@ -50,7 +50,16 @@ public sealed class OperationsService(
                 return cachedSnapshot;
             }
 
-            cachedSnapshot = await BuildSnapshotAsync(cancellationToken);
+            try
+            {
+                cachedSnapshot = await BuildSnapshotAsync(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && cachedSnapshot is not null)
+            {
+                logger.LogWarning(ex, "Operations refresh failed; returning the last successful snapshot");
+                snapshotExpiresAt = DateTimeOffset.UtcNow.AddSeconds(10);
+                return cachedSnapshot;
+            }
             snapshotExpiresAt = DateTimeOffset.UtcNow.AddSeconds(10);
             return cachedSnapshot;
         }
@@ -63,11 +72,16 @@ public sealed class OperationsService(
     private async Task<OperationsSnapshot> BuildSnapshotAsync(CancellationToken cancellationToken)
     {
         var client = httpClientFactory.CreateClient("operations");
-        var servicesTask = GetServicesAsync(cancellationToken);
-        var calendarTask = GetCalendarAsync(client, cancellationToken);
-        var playbackTask = GetPlaybackAsync(client, cancellationToken);
-        var downloadsTask = GetDownloadsAsync(client, cancellationToken);
-        var arrTask = GetArrOperationsAsync(client, cancellationToken);
+        var servicesTask = CollectOptionalAsync("service health", () => GetServicesAsync(cancellationToken),
+            (IReadOnlyList<ServiceCard>)[], cancellationToken);
+        var calendarTask = CollectOptionalAsync("media calendar", () => GetCalendarAsync(client, cancellationToken),
+            (IReadOnlyList<MediaCalendarItem>)[], cancellationToken);
+        var playbackTask = CollectOptionalAsync("Plex playback", () => GetPlaybackAsync(client, cancellationToken),
+            (IReadOnlyList<PlaybackSession>)[], cancellationToken);
+        var downloadsTask = CollectOptionalAsync("download queues", () => GetDownloadsAsync(client, cancellationToken),
+            (IReadOnlyList<DownloadQueueItem>)[], cancellationToken);
+        var arrTask = CollectOptionalAsync("arr operations", () => GetArrOperationsAsync(client, cancellationToken),
+            new ArrOperationsSummary([], [], [], []), cancellationToken);
         await Task.WhenAll(servicesTask, calendarTask, playbackTask, downloadsTask, arrTask);
 
         var services = await servicesTask;
@@ -75,7 +89,7 @@ public sealed class OperationsService(
         var playback = await playbackTask;
         var downloads = await downloadsTask;
         var arr = await arrTask;
-        var audit = commandStore.GetRecentAuditEvents(40);
+        var audit = GetAuditEvents();
         var incidents = services
             .Where(service => service.Status is ServiceStatus.Offline or ServiceStatus.Degraded)
             .Select(service => new IncidentSummary(
@@ -131,6 +145,32 @@ public sealed class OperationsService(
                 false,
                 null),
             arr);
+    }
+
+    private async Task<T> CollectOptionalAsync<T>(string source, Func<Task<T>> collect, T fallback, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await collect();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Operations source {Source} failed and will be omitted", source);
+            return fallback;
+        }
+    }
+
+    private IReadOnlyList<AuditEvent> GetAuditEvents()
+    {
+        try
+        {
+            return commandStore.GetRecentAuditEvents(40);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+        {
+            logger.LogWarning(ex, "Operations audit activity could not be loaded");
+            return [];
+        }
     }
 
     public async Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken)
@@ -573,12 +613,35 @@ public sealed class OperationsService(
         }
     }
 
-    private static IReadOnlyList<StorageForecast> GetStorageForecasts()
-        => DriveInfo.GetDrives().Where(drive => drive.IsReady).Select(drive =>
+    private IReadOnlyList<StorageForecast> GetStorageForecasts()
+    {
+        DriveInfo[] drives;
+        try
         {
-            var used = drive.TotalSize > 0 ? (double)(drive.TotalSize - drive.AvailableFreeSpace) / drive.TotalSize * 100 : 0;
-            return new StorageForecast(drive.Name, drive.TotalSize, drive.AvailableFreeSpace, Math.Round(used, 1), null, null);
-        }).ToArray();
+            drives = DriveInfo.GetDrives();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            logger.LogWarning(ex, "Operations storage drives could not be enumerated");
+            return [];
+        }
+
+        var forecasts = new List<StorageForecast>(drives.Length);
+        foreach (var drive in drives)
+        {
+            try
+            {
+                if (!drive.IsReady) continue;
+                var used = drive.TotalSize > 0 ? (double)(drive.TotalSize - drive.AvailableFreeSpace) / drive.TotalSize * 100 : 0;
+                forecasts.Add(new StorageForecast(drive.Name, drive.TotalSize, drive.AvailableFreeSpace, Math.Round(used, 1), null, null));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                logger.LogDebug(ex, "Operations skipped unavailable drive {DriveName}", drive.Name);
+            }
+        }
+        return forecasts;
+    }
 
     private static Uri BuildUri(Uri baseUri, string path)
     {
