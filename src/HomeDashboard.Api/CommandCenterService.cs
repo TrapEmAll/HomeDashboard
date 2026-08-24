@@ -26,7 +26,16 @@ public interface ICommandCenterService
     HouseholdProfile? AuthenticateProfile(string? username, string? password);
     CommandCenterArchive Export();
     void Restore(CommandCenterArchive archive);
+    DiscordBotConfiguration? GetDiscordConfiguration();
+    void SetIntegrationConnection(string id, bool connected, string status);
 }
+
+public sealed record DiscordBotConfiguration(
+    string Token,
+    string Prefix,
+    IReadOnlySet<ulong> AllowedUserIds,
+    IReadOnlySet<ulong> AllowedChannelIds,
+    IReadOnlySet<ulong> AllowedGuildIds);
 
 public sealed class CommandCenterService : ICommandCenterService
 {
@@ -51,6 +60,7 @@ public sealed class CommandCenterService : ICommandCenterService
             ["utilities"] = ("Utilities", ["electricity", "water", "gas"]),
             ["games"] = ("Game servers", ["players", "updates", "sessions"]),
             ["email"] = ("Email summary", ["inbox-summary"]),
+            ["discord"] = ("Discord", ["remote-capture", "shopping", "agenda", "tasks"]),
             ["webhook"] = ("Generic webhooks", ["events", "actions", "custom-assets"]),
             ["windows"] = ("Windows workspace", ["files", "logs", "machine-actions"])
         };
@@ -382,6 +392,32 @@ public sealed class CommandCenterService : ICommandCenterService
             var account = state.Accounts.FirstOrDefault(item => item.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
             if (account is null || !FixedEquals(account.PasswordHash, ApiKeyValidator.HashSecret(password))) return null;
             return state.Profiles.FirstOrDefault(item => item.Id == account.ProfileId && item.Active);
+        }
+    }
+
+    public DiscordBotConfiguration? GetDiscordConfiguration()
+    {
+        lock (gate)
+        {
+            var integration = state.Integrations.FirstOrDefault(item => item.Id == "discord" && item.Enabled);
+            if (integration is null || string.IsNullOrWhiteSpace(integration.Secret)) return null;
+            return new DiscordBotConfiguration(integration.Secret,
+                string.IsNullOrWhiteSpace(integration.Settings.GetValueOrDefault("prefix")) ? "!hd" : Limit(integration.Settings["prefix"].Trim(), 20),
+                ParseIds(integration.Settings.GetValueOrDefault("allowedUserIds")),
+                ParseIds(integration.Settings.GetValueOrDefault("allowedChannelIds")),
+                ParseIds(integration.Settings.GetValueOrDefault("allowedGuildIds")));
+        }
+    }
+
+    public void SetIntegrationConnection(string id, bool connected, string status)
+    {
+        lock (gate)
+        {
+            var existing = state.Integrations.FirstOrDefault(item => item.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            var limitedStatus = Limit(status, 300);
+            if (existing is null || (existing.Connected == connected && existing.Status == limitedStatus)) return;
+            MarkIntegrationLocked(id, connected, status);
+            SaveLocked();
         }
     }
 
@@ -780,6 +816,10 @@ public sealed class CommandCenterService : ICommandCenterService
     private static int ParseInt(string? value, int fallback) => int.TryParse(value, out var result) ? result : fallback;
     private static string[] Split(string? value) => string.IsNullOrWhiteSpace(value) ? [] : value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     private static string[] SplitRoots(string? value) => string.IsNullOrWhiteSpace(value) ? [] : value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(Path.GetFullPath).ToArray();
+    private static IReadOnlySet<ulong> ParseIds(string? value) => string.IsNullOrWhiteSpace(value)
+        ? new HashSet<ulong>()
+        : value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(item => ulong.TryParse(item, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
     private static bool IsWithinRoot(string path, string root) => path.Equals(root, StringComparison.OrdinalIgnoreCase) || path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     private static bool FixedEquals(string left, string right)
     {
