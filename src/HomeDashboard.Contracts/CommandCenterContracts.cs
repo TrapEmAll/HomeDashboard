@@ -219,6 +219,12 @@ public sealed record CommandCenterActionResult(
     bool RequiresConfirmation = false,
     string? AuditId = null);
 
+public sealed record CommandCenterBatchRequest(
+    IReadOnlyList<CommandCenterActionRequest>? Actions = null,
+    IReadOnlyList<CommandCenterDeleteRequest>? Deletes = null);
+
+public sealed record CommandCenterDeleteRequest(string Kind, string Id);
+
 public sealed record AssistantRequest(string Message, bool AllowActions = false);
 
 public sealed record AssistantResponse(

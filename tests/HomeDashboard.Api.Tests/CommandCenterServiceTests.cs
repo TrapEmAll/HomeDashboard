@@ -51,6 +51,44 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task BatchOperationsUpdateAndDeletePersonalItemsTogether()
+    {
+        var service = CreateService();
+        var initial = service.Upsert(new CommandCenterItemRequest("task", null, "Finish release"));
+        service.Upsert(new CommandCenterItemRequest("shopping", null, "Coffee"));
+        service.Ingest(new CommandCenterWebhook("UPS", "battery", "Battery low", "Charge soon", NotificationSeverity.Warning));
+        var task = initial.Tasks.Single();
+        var shopping = initial.Shopping.SingleOrDefault() ?? (await service.GetSnapshotAsync(CancellationToken.None)).Shopping.Single();
+        var alert = (await service.GetSnapshotAsync(CancellationToken.None)).Inbox.Single(item => item.Title == "Battery low");
+
+        var result = service.ApplyBatch(new CommandCenterBatchRequest(
+            [
+                new CommandCenterActionRequest("task.toggle", task.Id, Arguments: new Dictionary<string, string> { ["completed"] = "true" }),
+                new CommandCenterActionRequest("notification.ack", alert.Id)
+            ],
+            [new CommandCenterDeleteRequest("shopping", shopping.Id)]));
+
+        Assert.True(result.Tasks.Single(item => item.Id == task.Id).Completed);
+        Assert.True(result.Inbox.Single(item => item.Id == alert.Id).Acknowledged);
+        Assert.Empty(result.Shopping);
+    }
+
+    [Fact]
+    public async Task InvalidBatchDoesNotPartiallyMutateState()
+    {
+        var service = CreateService();
+        var task = service.Upsert(new CommandCenterItemRequest("task", null, "Keep unchanged")).Tasks.Single();
+
+        Assert.Throws<InvalidOperationException>(() => service.ApplyBatch(new CommandCenterBatchRequest(
+        [
+            new CommandCenterActionRequest("task.toggle", task.Id, Arguments: new Dictionary<string, string> { ["completed"] = "true" }),
+            new CommandCenterActionRequest("machine.shutdown", "server")
+        ])));
+
+        Assert.False((await service.GetSnapshotAsync(CancellationToken.None)).Tasks.Single().Completed);
+    }
+
+    [Fact]
     public async Task LocalModeActionsAreAudited()
     {
         var service = CreateService();

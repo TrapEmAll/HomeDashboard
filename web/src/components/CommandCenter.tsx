@@ -7,12 +7,13 @@ import {
 } from "lucide-react";
 import {
   askAssistant, browseCommandCenterFiles, deleteCommandCenterItem, getCommandCenter, getCommandCenterLogs,
-  runCommandCenterAction, saveCommandCenterItem, searchCommandCenter, updateCommandCenterIntegration
+  runCommandCenterAction, runCommandCenterBatch, saveCommandCenterItem, searchCommandCenter, updateCommandCenterIntegration
 } from "../lib/api";
 import type {
-  AssistantResponse, CommandCenterActionRequest, CommandCenterItemRequest, CommandCenterSnapshot,
+  AssistantResponse, CommandCenterActionRequest, CommandCenterBatchRequest, CommandCenterItemRequest, CommandCenterSnapshot,
   FileWorkspaceEntry, IntegrationStatus, SearchResult, SystemLogEntry
 } from "../types/commandCenter";
+import { ProductivityWorkspace } from "./ProductivityWorkspace";
 
 type Tab = "today" | "planner" | "home" | "systems" | "automations" | "integrations";
 type CaptureKind = "task" | "calendar" | "note" | "shopping" | "package" | "media" | "automation" | "asset" | "profile";
@@ -80,6 +81,13 @@ export function CommandCenter({ authenticated }: { authenticated: boolean }) {
     finally { setBusy(false); }
   }
 
+  async function batch(request: CommandCenterBatchRequest) {
+    setBusy(true);
+    try { setSnapshot(await runCommandCenterBatch(request)); setError(null); }
+    catch (ex) { setError(ex instanceof Error ? ex.message : "Bulk operation failed."); }
+    finally { setBusy(false); }
+  }
+
   async function remove(kind: string, id: string) {
     if (!window.confirm("Remove this item?")) return;
     await deleteCommandCenterItem(kind, id); await load();
@@ -144,7 +152,7 @@ export function CommandCenter({ authenticated }: { authenticated: boolean }) {
     <nav className="command-tabs" aria-label="Command center views">{tabs.map((item) => <button className={tab === item.id ? "active" : ""} type="button" aria-label={item.label} key={item.id} onClick={() => setTab(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
 
     {tab === "today" ? <TodayView snapshot={snapshot} widgets={visibleWidgets} onAction={act} onCapture={setCapture} onDelete={remove} /> : null}
-    {tab === "planner" ? <PlannerView snapshot={snapshot} onAction={act} onCapture={setCapture} onDelete={remove} /> : null}
+    {tab === "planner" ? <ProductivityWorkspace snapshot={snapshot} busy={busy} onBatch={batch} onSave={saveItem} onCapture={setCapture} /> : null}
     {tab === "home" ? <HomeView snapshot={snapshot} onAction={act} /> : null}
     {tab === "systems" ? <SystemsView snapshot={snapshot} onCapture={setCapture} onAction={act} /> : null}
     {tab === "systems" ? <SystemWorkspaceBar onOpen={setWorkspace} /> : null}
@@ -171,10 +179,6 @@ function TodayView({ snapshot, widgets, onAction, onCapture, onDelete }: ViewPro
     {widgets.includes("notes") ? <Panel title="Quick notes" icon={NotebookPen} action={<button type="button" onClick={() => onCapture("note")}><Plus size={14} />Note</button>}><div className="note-list">{snapshot.notes.slice(0, 5).map((item) => <article key={item.id}><strong>{item.title}</strong><p>{item.body}</p>{item.tags.length ? <span>{item.tags.join(" · ")}</span> : null}</article>)}</div></Panel> : null}
     {widgets.includes("activity") ? <Panel title="Global activity" icon={Activity} meta={`${snapshot.activity.length} events`}><div className="global-activity">{snapshot.activity.slice(0, 9).map((item) => <article className={item.succeeded ? "" : "failed"} key={item.id}><i /><div><strong>{friendlyTool(item.tool)}</strong><span>{item.message}</span></div><time>{relative(item.occurredAt)}</time></article>)}</div></Panel> : null}
   </div>;
-}
-
-function PlannerView({ snapshot, onAction, onCapture, onDelete }: ViewProps) {
-  return <div className="command-grid planner-grid"><Panel className="wide" title="Tasks" icon={ListChecks} action={<button type="button" onClick={() => onCapture("task")}><Plus size={14} />Task</button>}><TaskList items={snapshot.tasks} onAction={onAction} onDelete={onDelete} /></Panel><Panel title="Calendar" icon={CalendarDays} action={<button type="button" onClick={() => onCapture("calendar")}><Plus size={14} />Event</button>}><CompactItems items={snapshot.calendar.map((item) => ({ id: item.id, title: item.title, detail: item.calendar, date: item.startsAt }))} empty="No events" /></Panel><Panel title="Knowledge" icon={FileText} action={<button type="button" onClick={() => onCapture("note")}><Plus size={14} />Note</button>}><div className="note-list">{snapshot.notes.map((item) => <article key={item.id}><strong>{item.title}</strong><p>{item.body}</p><button type="button" title="Delete note" onClick={() => void onDelete("note", item.id)}><Trash2 size={13} /></button></article>)}</div></Panel><Panel title="Household" icon={Users} meta={`${snapshot.profiles.length} profiles`} action={<button type="button" onClick={() => onCapture("profile")}><Plus size={14} />Account</button>}><div className="profile-list">{snapshot.profiles.map((item) => <span key={item.id}><i style={{ background: item.color ?? "#5eead4" }} />{item.displayName}<small>{item.role}</small></span>)}</div></Panel></div>;
 }
 
 function HomeView({ snapshot, onAction }: Pick<ViewProps, "snapshot" | "onAction">) {
