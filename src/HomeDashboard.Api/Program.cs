@@ -219,6 +219,11 @@ app.MapPost("/api/command-center/actions", async (CommandCenterActionRequest req
     var result = await commandCenter.ExecuteAsync(request, cancellationToken);
     return result.Succeeded ? Results.Ok(result) : result.RequiresConfirmation ? Results.Json(result, statusCode: StatusCodes.Status409Conflict) : Results.BadRequest(result);
 });
+app.MapPost("/api/command-center/batch", (CommandCenterBatchRequest request, ICommandCenterService commandCenter) =>
+{
+    try { return Results.Ok(commandCenter.ApplyBatch(request)); }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
 app.MapGet("/api/command-center/search", (string? q, ICommandCenterService commandCenter)
     => Results.Ok(commandCenter.Search(q ?? "")));
 app.MapPost("/api/command-center/assistant", async (AssistantRequest request, ICommandCenterService commandCenter, CancellationToken cancellationToken) =>

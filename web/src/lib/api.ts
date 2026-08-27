@@ -1,5 +1,5 @@
 import type { AgentHistoryPoint, ArrCommandAction, ArrCommandResult, AuditEvent, DashboardNotification, DashboardSettings, DashboardSnapshot, DownloadControlAction, MaintenanceWindow, NewsContentKind, NewsItem, OperationsSnapshot, OpmlImportPreview, ServiceCard, ServiceDiscoveryResult, ServiceKind, ServiceMetric, ServiceStatus, SetupRequest, SetupStatus, SystemStats, UpdateDashboardSettingsRequest } from "../types/dashboard";
-import type { AssistantResponse, CommandCenterActionRequest, CommandCenterActionResult, CommandCenterItemRequest, CommandCenterSnapshot, FileWorkspaceEntry, IntegrationStatus, SearchResult, SystemLogEntry } from "../types/commandCenter";
+import type { AssistantResponse, CommandCenterActionRequest, CommandCenterActionResult, CommandCenterBatchRequest, CommandCenterItemRequest, CommandCenterSnapshot, FileWorkspaceEntry, IntegrationStatus, SearchResult, SystemLogEntry } from "../types/commandCenter";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 let dashboardRequest: Promise<DashboardSnapshot> | null = null;
@@ -185,6 +185,13 @@ export async function runCommandCenterAction(request: CommandCenterActionRequest
   });
   if (response.status === 409) return response.json() as Promise<CommandCenterActionResult>;
   return readJson<CommandCenterActionResult>(response);
+}
+
+export async function runCommandCenterBatch(request: CommandCenterBatchRequest): Promise<CommandCenterSnapshot> {
+  const response = await fetch(`${apiBaseUrl}/api/command-center/batch`, {
+    method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request)
+  });
+  return readJson<CommandCenterSnapshot>(response);
 }
 
 export async function searchCommandCenter(query: string): Promise<SearchResult[]> {

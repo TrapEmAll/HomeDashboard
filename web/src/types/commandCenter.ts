@@ -39,6 +39,8 @@ export interface CommandCenterSnapshot {
 export interface CommandCenterItemRequest { kind: string; id?: string | null; title: string; details?: string | null; category?: string | null; date?: string | null; fields?: Record<string, string>; }
 export interface CommandCenterActionRequest { tool: string; target?: string | null; confirmed?: boolean; arguments?: Record<string, string>; }
 export interface CommandCenterActionResult { succeeded: boolean; message: string; requiresConfirmation: boolean; auditId?: string | null; }
+export interface CommandCenterDeleteRequest { kind: string; id: string; }
+export interface CommandCenterBatchRequest { actions?: CommandCenterActionRequest[]; deletes?: CommandCenterDeleteRequest[]; }
 export interface SearchResult { id: string; kind: string; title: string; subtitle?: string | null; action?: string | null; score: number; }
 export interface AssistantSuggestion { label: string; prompt: string; }
 export interface AssistantResponse { message: string; suggestions: AssistantSuggestion[]; proposedActions: CommandCenterActionRequest[]; generatedAt: string; }

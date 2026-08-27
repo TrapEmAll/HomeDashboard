@@ -16,6 +16,7 @@ public interface ICommandCenterService
     Task<CommandCenterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
     CommandCenterSnapshot Upsert(CommandCenterItemRequest request);
     bool Delete(string kind, string id);
+    CommandCenterSnapshot ApplyBatch(CommandCenterBatchRequest request);
     Task<CommandCenterActionResult> ExecuteAsync(CommandCenterActionRequest request, CancellationToken cancellationToken);
     IReadOnlyList<CommandCenterSearchResult> Search(string query);
     Task<AssistantResponse> AskAsync(AssistantRequest request, CancellationToken cancellationToken);
@@ -117,9 +118,10 @@ public sealed class CommandCenterService : ICommandCenterService
             switch (kind)
             {
                 case "task":
+                    var existingTask = state.Tasks.FirstOrDefault(item => item.Id == id);
                     Replace(state.Tasks, new PersonalTask(id, request.Title.Trim(), request.Details, request.Category ?? "Inbox",
                         ParseEnum(fields.GetValueOrDefault("priority"), ItemPriority.Normal), request.Date,
-                        ParseBool(fields.GetValueOrDefault("completed")), DateTimeOffset.UtcNow), item => item.Id);
+                        ParseBool(fields.GetValueOrDefault("completed")), existingTask?.CreatedAt ?? DateTimeOffset.UtcNow), item => item.Id);
                     break;
                 case "calendar":
                     Replace(state.Calendar, new CalendarEntry(id, request.Title.Trim(), request.Date ?? DateTimeOffset.UtcNow,
@@ -199,6 +201,66 @@ public sealed class CommandCenterService : ICommandCenterService
             };
             if (removed) SaveLocked();
             return removed;
+        }
+    }
+
+    public CommandCenterSnapshot ApplyBatch(CommandCenterBatchRequest request)
+    {
+        var actions = request.Actions ?? [];
+        var deletes = request.Deletes ?? [];
+        if (actions.Count + deletes.Count is 0 or > 500)
+            throw new InvalidOperationException("A batch must contain between 1 and 500 operations.");
+
+        lock (gate)
+        {
+            foreach (var action in actions)
+            {
+                var tool = action.Tool.Trim().ToLowerInvariant();
+                var targetExists = tool switch
+                {
+                    "task.toggle" => state.Tasks.Any(item => item.Id == action.Target),
+                    "shopping.toggle" => state.Shopping.Any(item => item.Id == action.Target),
+                    "notification.ack" => state.Inbox.Any(item => item.Id == action.Target),
+                    _ => throw new InvalidOperationException($"Tool '{action.Tool}' is not available in a batch.")
+                };
+                if (!targetExists) throw new InvalidOperationException($"The target for '{action.Tool}' was not found.");
+            }
+            foreach (var deletion in deletes)
+            {
+                if (deletion.Kind.Trim().ToLowerInvariant() is not ("task" or "calendar" or "note" or "shopping" or "package" or "media"))
+                    throw new InvalidOperationException($"Items of kind '{deletion.Kind}' cannot be batch deleted.");
+            }
+
+            foreach (var action in actions)
+            {
+                var tool = action.Tool.Trim().ToLowerInvariant();
+                var result = ExecuteLocalLocked(tool, action);
+                if (!result.Succeeded) throw new InvalidOperationException(result.Message);
+                state.Activity.Add(new CommandCenterActivity(Guid.NewGuid().ToString("n"), tool, action.Target,
+                    result.Message, DateTimeOffset.UtcNow, true));
+            }
+
+            foreach (var deletion in deletes)
+            {
+                var kind = deletion.Kind.Trim().ToLowerInvariant();
+                var removed = kind switch
+                {
+                    "task" => state.Tasks.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    "calendar" => state.Calendar.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    "note" => state.Notes.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    "shopping" => state.Shopping.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    "package" => state.Packages.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    "media" => state.MediaRequests.RemoveAll(item => item.Id == deletion.Id) > 0,
+                    _ => throw new InvalidOperationException($"Items of kind '{deletion.Kind}' cannot be batch deleted.")
+                };
+                if (removed)
+                    state.Activity.Add(new CommandCenterActivity(Guid.NewGuid().ToString("n"), $"{kind}.delete", deletion.Id,
+                        $"{kind} removed.", DateTimeOffset.UtcNow, true));
+            }
+
+            Trim(state.Activity, 500);
+            SaveLocked();
+            return BuildSnapshotLocked();
         }
     }
 

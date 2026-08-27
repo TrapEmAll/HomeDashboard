@@ -11,6 +11,8 @@ The **Command** workspace combines daily planning, household context, home contr
 - **Automate** supports manual rules and `daily at HH:mm`, `every N minutes`, `task overdue`, and `mode NAME` triggers.
 - **Connect** configures external systems. Blank secret fields preserve the current secret.
 
+The **Plan** workspace includes 20 daily-use productivity features: task search, list filtering, priority filtering, smart sorting, due-date grouping, bulk completion, completed-task cleanup, one-day postponement, a seven-day agenda, calendar filtering, shopping-list filtering, purchase progress, bulk purchase, purchased-item cleanup, copyable shopping lists, note search, note tag filtering, note pinning, inbox severity filtering, and bulk acknowledgement. Filters persist in the browser. Bulk operations are sent as one bounded request and are limited to safe local task, shopping, notification, and deletion operations.
+
 Use the command palette or `Ctrl+K` to search tasks, calendar entries, notes, packages, media, assets, and home entities. Browser speech recognition can fill the assistant prompt when the browser supports it. The built-in assistant answers local dashboard questions deterministically; Ollama can supply conversational responses when configured. Suggested actions are proposals and still require approval.
 
 ## Modes and layouts
