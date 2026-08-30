@@ -377,6 +377,9 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var area = parts[0].ToLowerInvariant();
         if (area == "status") return await StatusAsync(cancellationToken);
+        if (area == "brief") return await BriefingAsync(cancellationToken);
+        if (area == "attention") return await AttentionAsync(cancellationToken);
+        if (area == "ask") return await AskAssistantAsync(command[parts[0].Length..].Trim(), cancellationToken);
         if (area == "search") return Search(command[parts[0].Length..].Trim());
         var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant() ?? "list";
         var value = parts.ElementAtOrDefault(2)?.Trim() ?? "";
@@ -405,16 +408,27 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         var value = (area, action) switch
         {
             ("task", "add") => string.Join(" | ", Get("title"), Get("due"), Get("priority", "Normal"), Get("list", "Inbox")),
+            ("task", "defer") => string.Join(" | ", Item(), Get("days", "1")),
+            ("task", "priority") => string.Join(" | ", Item(), Get("priority", "Normal")),
+            ("task", "move") => string.Join(" | ", Item(), Get("list", "Inbox")),
             ("shopping", "add") => string.Join(" | ", Get("items"), Get("list", "Shopping")),
+            ("shopping", "buy_all") => Get("list"),
+            ("shopping", "clear_purchased") => Get("list"),
             ("calendar", "add") => string.Join(" | ", Get("title"), Get("when"), Get("location")),
             ("note", "add") => string.Join(" | ", Get("title"), Get("body")),
+            ("note", "search") => Get("query"),
+            ("note", "pin") => string.Join(" | ", Item(), Get("pinned", "true")),
             ("package", "add") => string.Join(" | ", Get("description"), Get("carrier", "Carrier"), Get("tracking"), Get("eta")),
+            ("package", "update") => string.Join(" | ", Item(), Get("status"), Get("eta")),
             ("media", "search") => Get("query"),
             ("media", "add") => string.Join(" | ", Get("media_title", Get("title")), Get("search_now", "true")),
             ("system", "search") => Get("query"),
             ("system", "mode") => Get("mode", "Home"),
             ("inbox", "snooze") => string.Join(" | ", Item(), Get("minutes", "60")),
+            ("notify", "send") => string.Join(" | ", Get("title"), Get("message")),
             ("reminder", "add") => string.Join(" | ", Get("title"), Get("message")),
+            ("automation", "add") => string.Join(" | ", Get("name"), Get("trigger"), Get("action_tool"), Get("action_target")),
+            ("assistant", "ask") => Get("question"),
             ("device", "control") => string.Join(" | ", Item(), Get("service", "toggle"), Get("confirm", "false")),
             _ => Item()
         };
@@ -476,19 +490,33 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
             ("shopping" or "shop", "add") => AddShopping(value),
             ("shopping" or "shop", "done") => await CompleteAsync("Shopping", "shopping.toggle", value, cancellationToken),
             ("shopping" or "shop", "list") => await ListAsync("shopping", cancellationToken),
+            ("shopping" or "shop", "purchased") => await ListAsync("shopping.purchased", cancellationToken),
+            ("shopping" or "shop", "buy_all") => BuyAllShopping(value),
+            ("shopping" or "shop", "clear_purchased") => ClearPurchasedShopping(value),
             ("shopping" or "shop", "remove") => Remove("shopping", "Shopping", value),
             ("task" or "tasks", "add") => AddTask(value),
             ("task" or "tasks", "done") => await CompleteAsync("Task", "task.toggle", value, cancellationToken),
+            ("task" or "tasks", "reopen") => await ReopenTaskAsync(value, cancellationToken),
+            ("task" or "tasks", "defer") => DeferTask(value),
+            ("task" or "tasks", "priority") => UpdateTaskPriority(value),
+            ("task" or "tasks", "move") => MoveTask(value),
             ("task" or "tasks", "list") => await ListAsync("task", cancellationToken),
+            ("task" or "tasks", "today") => await ListAsync("task.today", cancellationToken),
+            ("task" or "tasks", "overdue") => await ListAsync("task.overdue", cancellationToken),
             ("task" or "tasks", "remove") => Remove("task", "Task", value),
             ("agenda" or "calendar", "add") => AddAgenda(value),
             ("agenda" or "calendar", "list") => await ListAsync("calendar", cancellationToken),
+            ("agenda" or "calendar", "today") => await ListAsync("calendar.today", cancellationToken),
+            ("agenda" or "calendar", "week") => await ListAsync("calendar.week", cancellationToken),
             ("agenda" or "calendar", "remove") => Remove("calendar", "Calendar", value),
             ("note" or "notes", "add") => AddNote(value),
             ("note" or "notes", "list") => await ListAsync("note", cancellationToken),
+            ("note" or "notes", "search") => SearchNotes(value),
+            ("note" or "notes", "pin") => PinNote(value),
             ("note" or "notes", "remove") => Remove("note", "Note", value),
             ("package" or "delivery", "add") => AddPackage(value),
             ("package" or "delivery", "list") => await ListAsync("package", cancellationToken),
+            ("package" or "delivery", "update") => UpdatePackage(value),
             ("package" or "delivery", "remove") => Remove("package", "Package", value),
             ("media" or "request", "search") => await SearchMediaAsync(value, cancellationToken),
             ("media" or "request", "add") => await AddMediaAsync(value, actor, cancellationToken),
@@ -496,18 +524,27 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
             ("media" or "request", "remove") => Remove("media", "Media", value),
             ("inbox" or "alert" or "alerts", "list") => await ListAsync("inbox", cancellationToken),
             ("inbox" or "alert" or "alerts", "ack") => await InboxActionAsync("notification.ack", value, cancellationToken),
+            ("inbox" or "alert" or "alerts", "ack_all") => AcknowledgeAllAlerts(),
             ("inbox" or "alert" or "alerts", "snooze") => await SnoozeAsync(value, cancellationToken),
+            ("notify" or "notification", "send") => await SendNotificationAsync(value, cancellationToken),
             ("reminder" or "reminders", "add") => await AddReminderAsync(value, cancellationToken),
             ("automation" or "automations", "list") => await ListAsync("automation", cancellationToken),
+            ("automation" or "automations", "add") => AddAutomation(value),
             ("automation" or "automations", "run") => await RunAutomationAsync(value, cancellationToken),
+            ("assistant" or "ask", "ask") => await AskAssistantAsync(value, cancellationToken),
+            ("assistant", "brief") => await BriefingAsync(cancellationToken),
+            ("assistant", "attention") => await AttentionAsync(cancellationToken),
             ("device" or "devices" or "home", "control") => await ControlDeviceAsync(value, cancellationToken),
             ("mode", "set") or ("system", "mode") => await SetModeAsync(value, cancellationToken),
             ("search", _) or ("system", "search") => Search(value),
+            ("system", "brief") => await BriefingAsync(cancellationToken),
+            ("system", "attention") => await AttentionAsync(cancellationToken),
             ("integration" or "integrations", "list") or ("system", "integrations") => await ListAsync("integration", cancellationToken),
             ("asset" or "assets", "list") or ("system", "assets") => await ListAsync("asset", cancellationToken),
             ("device" or "devices" or "home", "list") or ("system", "devices") => await ListAsync("device", cancellationToken),
             ("profile" or "profiles", "list") or ("system", "profiles") => await ListAsync("profile", cancellationToken),
             ("activity", "list") or ("system", "activity") => await ListAsync("activity", cancellationToken),
+            ("system", "logs") => await LogsAsync(cancellationToken),
             ("system", "status") => await StatusAsync(cancellationToken),
             ("help", _) => Help(),
             _ => $"Unknown command.\n{Help()}"
@@ -562,6 +599,136 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
                 ["status"] = "Tracking"
             }));
         return $"Package tracked: {fields[0]}.";
+    }
+
+    private async Task<string> ReopenTaskAsync(string query, CancellationToken cancellationToken)
+    {
+        var match = Resolve("Task", query);
+        if (match is null) return "No matching task was found.";
+        var result = await commandCenter.ExecuteAsync(new CommandCenterActionRequest("task.toggle", match.Id, true,
+            new Dictionary<string, string> { ["completed"] = "false" }), cancellationToken);
+        return result.Succeeded ? $"Reopened: {match.Title}." : result.Message;
+    }
+
+    private string DeferTask(string value)
+    {
+        var fields = Fields(value);
+        var task = FindTask(fields[0]);
+        if (task is null) return "No matching task was found.";
+        var days = int.TryParse(fields.ElementAtOrDefault(1), out var parsed) ? Math.Clamp(parsed, 1, 365) : 1;
+        var due = (task.DueAt ?? DateTimeOffset.Now).AddDays(days);
+        commandCenter.Upsert(TaskRequest(task with { DueAt = due }));
+        return $"Deferred {task.Title} to {due.LocalDateTime:g}.";
+    }
+
+    private string UpdateTaskPriority(string value)
+    {
+        var fields = Fields(value);
+        var task = FindTask(fields[0]);
+        if (task is null) return "No matching task was found.";
+        var priority = Enum.TryParse<ItemPriority>(fields.ElementAtOrDefault(1), true, out var parsed) ? parsed : ItemPriority.Normal;
+        commandCenter.Upsert(TaskRequest(task with { Priority = priority }));
+        return $"{task.Title} is now {priority} priority.";
+    }
+
+    private string MoveTask(string value)
+    {
+        var fields = Fields(value);
+        var task = FindTask(fields[0]);
+        if (task is null) return "No matching task was found.";
+        var list = string.IsNullOrWhiteSpace(fields.ElementAtOrDefault(1)) ? "Inbox" : fields[1].Trim();
+        commandCenter.Upsert(TaskRequest(task with { List = list }));
+        return $"Moved {task.Title} to {list}.";
+    }
+
+    private string BuyAllShopping(string list)
+    {
+        var archive = commandCenter.Export();
+        var items = archive.Shopping.Where(item => !item.Completed && MatchesList(item.List, list)).Take(500).ToArray();
+        if (items.Length == 0) return "No matching unpurchased shopping items were found.";
+        commandCenter.ApplyBatch(new CommandCenterBatchRequest(items.Select(item =>
+            new CommandCenterActionRequest("shopping.toggle", item.Id)).ToArray()));
+        return $"Marked {items.Length} shopping item{(items.Length == 1 ? "" : "s")} purchased.";
+    }
+
+    private string ClearPurchasedShopping(string list)
+    {
+        var archive = commandCenter.Export();
+        var items = archive.Shopping.Where(item => item.Completed && MatchesList(item.List, list)).Take(500).ToArray();
+        if (items.Length == 0) return "No matching purchased shopping items were found.";
+        commandCenter.ApplyBatch(new CommandCenterBatchRequest(Deletes: items.Select(item =>
+            new CommandCenterDeleteRequest("shopping", item.Id)).ToArray()));
+        return $"Cleared {items.Length} purchased shopping item{(items.Length == 1 ? "" : "s")}.";
+    }
+
+    private string SearchNotes(string query)
+    {
+        var needle = query.Trim();
+        if (needle.Length == 0) return "Provide something to search for.";
+        var archive = commandCenter.Export();
+        var notes = archive.Notes.Where(item => item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || item.Body.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || item.Tags.Any(tag => tag.Contains(needle, StringComparison.OrdinalIgnoreCase))).Take(15).ToArray();
+        return notes.Length == 0 ? "No matching notes found." : "**Notes**\n" + string.Join("\n", notes.Select(item =>
+            $"- **{item.Title}**{Suffix(Short(item.Body, 100))}"));
+    }
+
+    private string PinNote(string value)
+    {
+        var fields = Fields(value);
+        var note = FindNote(fields[0]);
+        if (note is null) return "No matching note was found.";
+        var pinned = !bool.TryParse(fields.ElementAtOrDefault(1), out var parsed) || parsed;
+        commandCenter.Upsert(new CommandCenterItemRequest("note", note.Id, note.Title, note.Body,
+            Fields: new Dictionary<string, string>
+            {
+                ["tags"] = string.Join(", ", note.Tags),
+                ["pinned"] = pinned.ToString()
+            }));
+        return pinned ? $"Pinned: {note.Title}." : $"Unpinned: {note.Title}.";
+    }
+
+    private string UpdatePackage(string value)
+    {
+        var fields = Fields(value);
+        var package = FindPackage(fields[0]);
+        if (package is null) return "No matching package was found.";
+        var status = string.IsNullOrWhiteSpace(fields.ElementAtOrDefault(1)) ? package.Status : fields[1].Trim();
+        var eta = ParseDate(fields.ElementAtOrDefault(2)) ?? package.EstimatedDelivery;
+        commandCenter.Upsert(new CommandCenterItemRequest("package", package.Id, package.Description, Date: eta,
+            Fields: new Dictionary<string, string>
+            {
+                ["carrier"] = package.Carrier,
+                ["trackingNumber"] = package.TrackingNumber,
+                ["status"] = status
+            }));
+        return $"Updated {package.Description}: {status}.";
+    }
+
+    private string AddAutomation(string value)
+    {
+        var fields = Fields(value);
+        if (fields[0].Length == 0 || fields.ElementAtOrDefault(1)?.Length is null or 0 || fields.ElementAtOrDefault(2)?.Length is null or 0)
+            return "Automation format: `automation add Name | daily at 08:00 | notification.create | Check dashboard`.";
+        commandCenter.Upsert(new CommandCenterItemRequest("automation", null, fields[0], Fields: new Dictionary<string, string>
+        {
+            ["trigger"] = fields[1],
+            ["actionTool"] = fields[2],
+            ["actionTarget"] = fields.ElementAtOrDefault(3) ?? "",
+            ["enabled"] = "true"
+        }));
+        return $"Automation created: {fields[0]}.";
+    }
+
+    private string AcknowledgeAllAlerts()
+    {
+        var archive = commandCenter.Export();
+        var alerts = archive.Inbox.Where(item => !item.Acknowledged
+            && (item.SnoozedUntil is null || item.SnoozedUntil <= DateTimeOffset.UtcNow)).Take(500).ToArray();
+        if (alerts.Length == 0) return "No unread alerts to acknowledge.";
+        commandCenter.ApplyBatch(new CommandCenterBatchRequest(alerts.Select(item =>
+            new CommandCenterActionRequest("notification.ack", item.Id)).ToArray()));
+        return $"Acknowledged {alerts.Length} alert{(alerts.Length == 1 ? "" : "s")}.";
     }
 
     private async Task<string> SearchMediaAsync(string value, CancellationToken cancellationToken)
@@ -657,12 +824,53 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         return result.Message;
     }
 
+    private async Task<string> SendNotificationAsync(string value, CancellationToken cancellationToken)
+    {
+        var fields = Fields(value);
+        var result = await commandCenter.ExecuteAsync(new CommandCenterActionRequest("notification.send", fields.ElementAtOrDefault(1) ?? fields[0], true,
+            new Dictionary<string, string> { ["title"] = fields[0], ["message"] = fields.ElementAtOrDefault(1) ?? fields[0] }), cancellationToken);
+        return result.Message;
+    }
+
     private async Task<string> RunAutomationAsync(string query, CancellationToken cancellationToken)
     {
         var match = ResolveChoice("automation", query);
         if (match is null) return "No matching automation was found.";
         var result = await commandCenter.ExecuteAsync(new CommandCenterActionRequest("automation.run", match.Id, true), cancellationToken);
         return result.Message;
+    }
+
+    private async Task<string> AskAssistantAsync(string question, CancellationToken cancellationToken)
+    {
+        var response = await commandCenter.AskAsync(new AssistantRequest(question, false), cancellationToken);
+        var suggestions = response.Suggestions.Take(3).Select(item => $"- {item.Label}").ToArray();
+        return suggestions.Length == 0 ? response.Message : $"{response.Message}\n\n**Suggestions**\n{string.Join("\n", suggestions)}";
+    }
+
+    private async Task<string> BriefingAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        return $"**{snapshot.Briefing.Greeting}**\n{snapshot.Briefing.Summary}\n" + string.Join("\n", snapshot.Briefing.Highlights.Select(item => $"- {item}"));
+    }
+
+    private async Task<string> AttentionAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        var alerts = snapshot.Inbox.Where(item => !item.Acknowledged && item.Severity != NotificationSeverity.Info).Take(5)
+            .Select(item => $"- **{item.Title}** - {item.Source}: {Short(item.Message, 100)}");
+        var tasks = snapshot.Tasks.Where(item => !item.Completed && item.DueAt < DateTimeOffset.UtcNow).Take(5)
+            .Select(item => $"- **{item.Title}** - overdue task{(item.DueAt is null ? "" : $" due {item.DueAt.Value.LocalDateTime:g}")}");
+        var assets = snapshot.Assets.Where(item => !IsHealthy(item.Status)).Take(5)
+            .Select(item => $"- **{item.Name}** - {item.Status}{Suffix(item.Detail)}");
+        var lines = alerts.Concat(tasks).Concat(assets).Take(15).ToArray();
+        return lines.Length == 0 ? "Nothing currently needs attention." : $"**Needs attention**\n{string.Join("\n", lines)}";
+    }
+
+    private async Task<string> LogsAsync(CancellationToken cancellationToken)
+    {
+        var logs = await commandCenter.GetSystemLogsAsync(6, cancellationToken);
+        return logs.Count == 0 ? "No recent API logs were available." : "**Recent logs**\n" + string.Join("\n", logs.Select(item =>
+            $"- **{item.Level}** {item.Source}: {Short(item.Message, 120)}"));
     }
 
     private async Task<string> ControlDeviceAsync(string value, CancellationToken cancellationToken)
@@ -688,11 +896,18 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
     private async Task<string> ListAsync(string kind, CancellationToken cancellationToken)
     {
         var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        var today = DateTime.Today;
+        var weekEnd = today.AddDays(7);
         var lines = kind switch
         {
             "task" => snapshot.Tasks.Where(item => !item.Completed).Take(15).Select(item => $"- **{item.Title}** - {item.Priority}{(item.DueAt is null ? "" : $", due {item.DueAt.Value.LocalDateTime:g}")}"),
+            "task.today" => snapshot.Tasks.Where(item => !item.Completed && item.DueAt?.LocalDateTime.Date == today).Take(15).Select(item => $"- **{item.Title}** - {item.Priority}, due {item.DueAt!.Value.LocalDateTime:t}"),
+            "task.overdue" => snapshot.Tasks.Where(item => !item.Completed && item.DueAt < DateTimeOffset.UtcNow).Take(15).Select(item => $"- **{item.Title}** - {item.Priority}, due {item.DueAt!.Value.LocalDateTime:g}"),
             "shopping" => snapshot.Shopping.Where(item => !item.Completed).Take(20).Select(item => $"- {item.Name}{(item.Quantity > 1 ? $" x{item.Quantity}" : "")} - {item.List}"),
+            "shopping.purchased" => snapshot.Shopping.Where(item => item.Completed).Take(20).Select(item => $"- {item.Name}{(item.Quantity > 1 ? $" x{item.Quantity}" : "")} - {item.List}"),
             "calendar" => snapshot.Calendar.Take(15).Select(item => $"- **{item.Title}** - {item.StartsAt.LocalDateTime:g}{Suffix(item.Location)}"),
+            "calendar.today" => snapshot.Calendar.Where(item => item.StartsAt.LocalDateTime.Date == today).Take(15).Select(item => $"- **{item.Title}** - {item.StartsAt.LocalDateTime:t}{Suffix(item.Location)}"),
+            "calendar.week" => snapshot.Calendar.Where(item => item.StartsAt.LocalDateTime.Date >= today && item.StartsAt.LocalDateTime.Date < weekEnd).Take(25).Select(item => $"- **{item.Title}** - {item.StartsAt.LocalDateTime:ddd g}{Suffix(item.Location)}"),
             "note" => snapshot.Notes.Take(15).Select(item => $"- **{item.Title}**{Suffix(Short(item.Body, 80))}"),
             "package" => snapshot.Packages.Take(15).Select(item => $"- **{item.Description}** - {item.Carrier}, {item.Status}"),
             "media" => snapshot.MediaRequests.Take(15).Select(item => $"- **{item.Title}** - {item.MediaType}, {item.Status}"),
@@ -706,7 +921,8 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
             _ => []
         };
         var values = lines.ToArray();
-        return values.Length == 0 ? $"No {kind} items to show." : $"**{char.ToUpperInvariant(kind[0]) + kind[1..]}**\n{string.Join("\n", values)}";
+        var title = kind.Contains('.') ? kind.Split('.')[0] : kind;
+        return values.Length == 0 ? $"No {title} items to show." : $"**{char.ToUpperInvariant(title[0]) + title[1..]}**\n{string.Join("\n", values)}";
     }
 
     private CommandCenterSearchResult? Resolve(string kind, string query)
@@ -721,12 +937,43 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         Autocomplete(area, "").FirstOrDefault(item => item.Id == query)
         ?? Autocomplete(area, query).FirstOrDefault();
 
+    private PersonalTask? FindTask(string query)
+    {
+        var archive = commandCenter.Export();
+        var choice = ResolveChoice("task", query);
+        return choice is null ? null : archive.Tasks.FirstOrDefault(item => item.Id == choice.Id);
+    }
+
+    private QuickNote? FindNote(string query)
+    {
+        var archive = commandCenter.Export();
+        var choice = ResolveChoice("note", query);
+        return choice is null ? null : archive.Notes.FirstOrDefault(item => item.Id == choice.Id);
+    }
+
+    private TrackedPackage? FindPackage(string query)
+    {
+        var archive = commandCenter.Export();
+        var choice = ResolveChoice("package", query);
+        return choice is null ? null : archive.Packages.FirstOrDefault(item => item.Id == choice.Id);
+    }
+
     private async Task<string> StatusAsync(CancellationToken cancellationToken)
     {
         var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
         return $"{snapshot.Tasks.Count(item => !item.Completed)} open tasks, {snapshot.Shopping.Count(item => !item.Completed)} shopping items, "
             + $"{snapshot.Calendar.Count} upcoming agenda entries, and {snapshot.Inbox.Count(item => !item.Acknowledged)} unread alerts.";
     }
+
+    private static CommandCenterItemRequest TaskRequest(PersonalTask task) =>
+        new("task", task.Id, task.Title, task.Details, task.List, task.DueAt, new Dictionary<string, string>
+        {
+            ["priority"] = task.Priority.ToString(),
+            ["completed"] = task.Completed.ToString()
+        });
+
+    private static bool MatchesList(string itemList, string? filter) =>
+        string.IsNullOrWhiteSpace(filter) || itemList.Equals(filter.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static bool IsHealthy(string status) => status.Equals("online", StringComparison.OrdinalIgnoreCase)
         || status.Equals("healthy", StringComparison.OrdinalIgnoreCase) || status.Equals("ok", StringComparison.OrdinalIgnoreCase)
@@ -735,20 +982,36 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
     private static string Short(string value, int length) => value.Length <= length ? value : value[..(length - 3)] + "...";
     private static string Year(int? year) => year is null ? "" : $" ({year})";
     private static string[] Fields(string value) => value.Split('|', StringSplitOptions.TrimEntries);
-    private static DateTimeOffset? ParseDate(string? value) => DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
+    private static DateTimeOffset? ParseDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (DateTimeOffset.TryParse(trimmed, out var parsed)) return parsed;
+        var lower = trimmed.ToLowerInvariant();
+        var baseDate = lower.StartsWith("tomorrow") ? DateTime.Today.AddDays(1) : lower.StartsWith("today") ? DateTime.Today : (DateTime?)null;
+        if (baseDate is null) return null;
+        var timeText = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ElementAtOrDefault(1);
+        var time = TimeSpan.Zero;
+        if (!string.IsNullOrWhiteSpace(timeText) && TimeOnly.TryParse(timeText, out var parsedTime)) time = parsedTime.ToTimeSpan();
+        return new DateTimeOffset(baseDate.Value.Add(time));
+    }
     private static string Help() => "**HomeDashboard Discord commands**\nUse `/home` for guided commands and autocomplete. Prefix commands also work:\n"
         + "`!hd shopping add milk, bread | Groceries`\n"
-        + "`!hd shopping list|done|remove ...`\n"
-        + "`!hd shopping done milk`\n"
+        + "`!hd shopping list|purchased|done|buy_all|clear_purchased|remove ...`\n"
         + "`!hd task add Renew certificate | 2026-09-01 18:00 | High | Home`\n"
-        + "`!hd task list|done|remove ...`\n"
+        + "`!hd task list|today|overdue|done|reopen|defer|priority|move|remove ...`\n"
         + "`!hd agenda add Dentist | 2026-09-03 14:00 | Downtown`\n"
-        + "`!hd note add Project idea | Details`\n"
+        + "`!hd agenda list|today|week|remove ...`\n"
+        + "`!hd note add Project idea | Details` · `!hd note search|pin|remove ...`\n"
         + "`!hd package add Keyboard | UPS | 1Z... | 2026-09-04`\n"
+        + "`!hd package list|update|remove ...`\n"
         + "`!hd media search Dune` · use `/home media add` to select and submit a verified release\n"
-        + "`!hd inbox list|ack|snooze ...`\n"
+        + "`!hd inbox list|ack|ack_all|snooze ...`\n"
+        + "`!hd notify send Title | Message`\n"
         + "`!hd reminder add Title | Details` · `!hd automations list|run ...`\n"
+        + "`!hd automation add Name | daily at 08:00 | notification.create | Check dashboard`\n"
+        + "`!hd ask What needs attention?` · `!hd brief` · `!hd attention`\n"
         + "`!hd device list|control Entity | toggle | true`\n"
         + "`!hd mode set Away` · `!hd search query` · `!hd integrations list`\n"
-        + "`!hd assets list` · `!hd profiles list` · `!hd activity list` · `!hd status`";
+        + "`!hd assets list` · `!hd profiles list` · `!hd activity list` · `!hd system logs` · `!hd status`";
 }
