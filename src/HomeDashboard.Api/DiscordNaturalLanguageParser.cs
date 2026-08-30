@@ -52,6 +52,8 @@ internal static class DiscordNaturalLanguageParser
 
     private static DiscordParseResult? ParseDirect(string text)
     {
+        var find = Regex.Match(text, @"^find\s+(?<query>.+)$", RegexOptions.IgnoreCase);
+        if (find.Success) return Result($"search {find.Groups["query"].Value.Trim()}", "search", find.Groups["query"].Value.Trim());
         if (Regex.IsMatch(text, @"^(?:list rules|(?:run|enable|disable) rule\s+.+)$", RegexOptions.IgnoreCase))
             return Result(text, text.Split(' ', 2)[0].ToLowerInvariant(), text.Length > text.IndexOf(' ') + 1 ? text[(text.IndexOf(' ') + 1)..] : null);
         var first = text.Split(' ', 2)[0].ToLowerInvariant();

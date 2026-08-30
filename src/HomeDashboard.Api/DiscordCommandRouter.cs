@@ -36,6 +36,8 @@ public sealed class DiscordCommandRouter(
                 return await QueueMachineAsync(parts, actor, cancellationToken);
             if (tokens[0] is "status" or "health")
                 return await StatusAsync(cancellationToken);
+            if (tokens[0] is "search" or "find")
+                return SearchCommand(command[(command.IndexOf(' ') + 1)..].Trim());
             if (tokens is ["list", "rules"])
                 return await ListAutomationRulesAsync(cancellationToken);
             if (tokens.Length >= 3 && tokens[1] == "rule" && (tokens[0] is "run" or "enable" or "disable"))
@@ -218,6 +220,32 @@ public sealed class DiscordCommandRouter(
         if (rules.Count == 0) return new CommandCenterActionResult(true, "No automation rules are configured.");
         var lines = rules.Select(rule => $"- **{rule.Name}** · {rule.Trigger} · {(rule.Enabled ? "enabled" : "disabled")}");
         return new CommandCenterActionResult(true, FitDiscordMessage(["**Automation rules**", string.Join("\n", lines)]));
+    }
+
+    private CommandCenterActionResult SearchCommand(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Fail("Provide a search query.");
+        var results = commandCenter.Search(query).Take(5).ToArray();
+        if (results.Length == 0) return new CommandCenterActionResult(true, $"No Command Center results matched '{query}'.");
+
+        var sections = new List<string> { $"**Search results for `{query}`**" };
+        sections.AddRange(results.GroupBy(item => item.Kind, StringComparer.OrdinalIgnoreCase)
+            .Select(group => $"**{group.Key}**\n{string.Join("\n", group.Select(FormatSearchResult))}"));
+        return new CommandCenterActionResult(true, FitDiscordMessage(sections));
+    }
+
+    private static string FormatSearchResult(CommandCenterSearchResult result)
+    {
+        var detail = string.IsNullOrWhiteSpace(result.Subtitle) ? "" : $" — {result.Subtitle}";
+        var action = result.Kind.ToLowerInvariant() switch
+        {
+            "task" => $" · `done {result.Id}`",
+            "shopping" => $" · `shopping done {result.Id}`",
+            "calendar" or "note" or "package" or "media" => $" · `remove {result.Kind.ToLowerInvariant()} {result.Id}`",
+            "system" => $" · `restart service {result.Id}`",
+            _ => $" · id `{result.Id}`"
+        };
+        return $"- **{result.Title}**{detail}{action}";
     }
 
     private async Task<CommandCenterActionResult> AutomationCommandAsync(string action, string query, CancellationToken cancellationToken)
