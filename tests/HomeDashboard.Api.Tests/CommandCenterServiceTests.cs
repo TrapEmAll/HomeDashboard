@@ -208,6 +208,91 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordCommandsUpdateTasksShoppingNotesPackagesAndAttention()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service);
+
+        await processor.ProcessStructuredAsync("task", "add", new Dictionary<string, string>
+        {
+            ["title"] = "Pay server bill",
+            ["due"] = "today 18:00",
+            ["priority"] = "High",
+            ["list"] = "Home"
+        }, "Alex", CancellationToken.None);
+        await processor.ProcessStructuredAsync("shopping", "add", new Dictionary<string, string>
+        {
+            ["items"] = "milk, bread",
+            ["list"] = "Groceries"
+        }, "Alex", CancellationToken.None);
+        await processor.ProcessStructuredAsync("note", "add", new Dictionary<string, string>
+        {
+            ["title"] = "Router idea",
+            ["body"] = "Replace switch in the rack"
+        }, "Alex", CancellationToken.None);
+        await processor.ProcessStructuredAsync("package", "add", new Dictionary<string, string>
+        {
+            ["description"] = "SSD",
+            ["carrier"] = "UPS",
+            ["tracking"] = "1Z123",
+            ["eta"] = "tomorrow"
+        }, "Alex", CancellationToken.None);
+
+        var taskId = processor.Autocomplete("task", "server").Single().Id;
+        var noteId = processor.Autocomplete("note", "router").Single().Id;
+        var packageId = processor.Autocomplete("package", "ssd").Single().Id;
+        var deferred = await processor.ProcessStructuredAsync("task", "defer", new Dictionary<string, string> { ["task"] = taskId, ["days"] = "2" }, "Alex", CancellationToken.None);
+        var moved = await processor.ProcessStructuredAsync("task", "move", new Dictionary<string, string> { ["task"] = taskId, ["list"] = "Bills" }, "Alex", CancellationToken.None);
+        var priority = await processor.ProcessStructuredAsync("task", "priority", new Dictionary<string, string> { ["task"] = taskId, ["priority"] = "Urgent" }, "Alex", CancellationToken.None);
+        var bought = await processor.ProcessStructuredAsync("shopping", "buy_all", new Dictionary<string, string> { ["list"] = "Groceries" }, "Alex", CancellationToken.None);
+        var pinned = await processor.ProcessStructuredAsync("note", "pin", new Dictionary<string, string> { ["note"] = noteId, ["pinned"] = "true" }, "Alex", CancellationToken.None);
+        var package = await processor.ProcessStructuredAsync("package", "update", new Dictionary<string, string> { ["package"] = packageId, ["status"] = "Delivered" }, "Alex", CancellationToken.None);
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Contains("Deferred", deferred);
+        Assert.Contains("Moved", moved);
+        Assert.Contains("Urgent", priority);
+        Assert.Contains("2 shopping", bought);
+        Assert.Contains("Pinned", pinned);
+        Assert.Contains("Delivered", package);
+        Assert.Contains(snapshot.Tasks, item => item.List == "Bills" && item.Priority == ItemPriority.Urgent);
+        Assert.All(snapshot.Shopping, item => Assert.True(item.Completed));
+        Assert.Contains(snapshot.Notes, item => item.Pinned);
+        Assert.Contains(snapshot.Packages, item => item.Status == "Delivered");
+    }
+
+    [Fact]
+    public async Task DiscordCommandsCreateAutomationBriefAskAndAcknowledgeAllAlerts()
+    {
+        var service = CreateService();
+        var processor = new DiscordCommandProcessor(service);
+        service.Ingest(new CommandCenterWebhook("UPS", "battery", "Battery low", "Runtime is under ten minutes", NotificationSeverity.Warning));
+        service.Ingest(new CommandCenterWebhook("Plex", "transcode", "Plex warning", "Transcoder is busy", NotificationSeverity.Warning));
+
+        var automation = await processor.ProcessStructuredAsync("automation", "add", new Dictionary<string, string>
+        {
+            ["name"] = "Morning check",
+            ["trigger"] = "daily at 08:00",
+            ["action_tool"] = "notification.create",
+            ["action_target"] = "Check dashboard"
+        }, "Alex", CancellationToken.None);
+        var brief = await processor.ProcessStructuredAsync("assistant", "brief", new Dictionary<string, string>(), "Alex", CancellationToken.None);
+        var answer = await processor.ProcessStructuredAsync("assistant", "ask", new Dictionary<string, string>
+        {
+            ["question"] = "What needs attention?"
+        }, "Alex", CancellationToken.None);
+        var ackAll = await processor.ProcessStructuredAsync("inbox", "ack_all", new Dictionary<string, string>(), "Alex", CancellationToken.None);
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+
+        Assert.Contains("Automation created", automation);
+        Assert.Contains(snapshot.Briefing.Greeting, brief);
+        Assert.Contains("attention", answer, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Acknowledged", ackAll);
+        Assert.All(snapshot.Inbox, item => Assert.True(item.Acknowledged));
+        Assert.Contains(snapshot.Automations, item => item.Name == "Morning check");
+    }
+
+    [Fact]
     public async Task DiscordCommandsManageInboxWithAutocomplete()
     {
         var service = CreateService();
@@ -280,6 +365,8 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Contains(command.Options.Value, option => option.Name == "system");
         Assert.Contains(command.Options.Value, option => option.Name == "device");
         Assert.Contains(command.Options.Value, option => option.Name == "automation");
+        Assert.Contains(command.Options.Value, option => option.Name == "assistant");
+        Assert.Contains(command.Options.Value, option => option.Name == "notify");
         Assert.Contains(command.Options.Value, option => option.Name == "help");
     }
 
