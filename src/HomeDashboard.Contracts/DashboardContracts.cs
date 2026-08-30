@@ -242,7 +242,8 @@ public enum AuditEventType
     AgentSnapshotReceived,
     MediaCommand,
     DiscordCommandReceived,
-    DiscordCommandCompleted
+    DiscordCommandCompleted,
+    DiscordRateLimitRejected
 }
 
 public sealed record SetupStatus(
