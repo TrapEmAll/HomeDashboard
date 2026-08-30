@@ -52,6 +52,8 @@ internal static class DiscordNaturalLanguageParser
 
     private static DiscordParseResult? ParseDirect(string text)
     {
+        if (Regex.IsMatch(text, @"^(?:list rules|(?:run|enable|disable) rule\s+.+)$", RegexOptions.IgnoreCase))
+            return Result(text, text.Split(' ', 2)[0].ToLowerInvariant(), text.Length > text.IndexOf(' ') + 1 ? text[(text.IndexOf(' ') + 1)..] : null);
         var first = text.Split(' ', 2)[0].ToLowerInvariant();
         if (first is "light" or "lights" or "lamp" or "lamps" or "thermostat" or "thermostats" or "temperature" or "climate" or "fan" or "fans" or "switch" or "switches")
             return Result($"home control {text}", "home", text.Length > first.Length ? text[(first.Length + 1)..] : null);

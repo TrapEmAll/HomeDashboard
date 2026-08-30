@@ -36,6 +36,10 @@ public sealed class DiscordCommandRouter(
                 return await QueueMachineAsync(parts, actor, cancellationToken);
             if (tokens[0] is "status" or "health")
                 return await StatusAsync(cancellationToken);
+            if (tokens is ["list", "rules"])
+                return await ListAutomationRulesAsync(cancellationToken);
+            if (tokens.Length >= 3 && tokens[1] == "rule" && (tokens[0] is "run" or "enable" or "disable"))
+                return await AutomationCommandAsync(tokens[0], command[command.IndexOf(' ', StringComparison.Ordinal)..].Trim()["rule".Length..].Trim(), cancellationToken);
 
             if (tokens[0] == "home" || tokens[0] == "homeassistant")
             {
@@ -208,6 +212,38 @@ public sealed class DiscordCommandRouter(
             "homeassistant.call", entity.Id, true, arguments), cancellationToken);
     }
 
+    private async Task<CommandCenterActionResult> ListAutomationRulesAsync(CancellationToken cancellationToken)
+    {
+        var rules = (await commandCenter.GetSnapshotAsync(cancellationToken)).Automations;
+        if (rules.Count == 0) return new CommandCenterActionResult(true, "No automation rules are configured.");
+        var lines = rules.Select(rule => $"- **{rule.Name}** · {rule.Trigger} · {(rule.Enabled ? "enabled" : "disabled")}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Automation rules**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> AutomationCommandAsync(string action, string query, CancellationToken cancellationToken)
+    {
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        var rule = snapshot.Automations.FirstOrDefault(item => item.Id.Equals(query, StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.Automations.FirstOrDefault(item => item.Name.Equals(query, StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.Automations.FirstOrDefault(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
+        if (rule is null) return new CommandCenterActionResult(false, $"No automation rule matched '{query}'.");
+
+        if (action == "run")
+            return await commandCenter.ExecuteAsync(new CommandCenterActionRequest("automation.run", rule.Id, true), cancellationToken);
+
+        var enabled = action == "enable";
+        commandCenter.Upsert(new CommandCenterItemRequest("automation", rule.Id, rule.Name,
+            Fields: new Dictionary<string, string>
+            {
+                ["trigger"] = rule.Trigger,
+                ["condition"] = rule.Condition ?? "",
+                ["actionTool"] = rule.ActionTool,
+                ["actionTarget"] = rule.ActionTarget ?? "",
+                ["enabled"] = enabled.ToString()
+            }));
+        return new CommandCenterActionResult(true, $"Automation '{rule.Name}' {(enabled ? "enabled" : "disabled")}.");
+    }
+
     private static HomeEntity? ResolveHomeEntity(IReadOnlyList<HomeEntity> entities, string target, bool climateOnly)
     {
         var terms = target.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -328,6 +364,6 @@ public sealed class DiscordCommandRouter(
                 && parts[1].Equals("service", StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static string Help() => "Supported commands: restart service <name>, backup now, restore <id>, maintenance <task>, machine <lock|sleep|restart|shutdown> <agentId>, status, health.";
+    private static string Help() => "Supported commands: restart service <name>, backup now, restore <id>, maintenance <task>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
 }
 
