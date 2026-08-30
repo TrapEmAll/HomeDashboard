@@ -14,6 +14,7 @@ public sealed class DashboardOptions
     public int NetworkProbeIntervalSeconds { get; init; } = 30;
     public int HostDetailRefreshSeconds { get; init; } = 60;
     public int DiscordConfirmationTimeoutSeconds { get; init; } = 60;
+    public string DiscordUnmatchedLogPath { get; init; } = "data/discord-unmatched.log";
 }
 
 public sealed class ServiceDefinition

@@ -34,6 +34,7 @@ public static class DashboardOptionsLoader
             NetworkProbeIntervalSeconds = ReadPositiveInt(section, "NetworkProbeIntervalSeconds", 30),
             HostDetailRefreshSeconds = ReadPositiveInt(section, "HostDetailRefreshSeconds", 60),
             DiscordConfirmationTimeoutSeconds = ReadPositiveInt(section, "DiscordConfirmationTimeoutSeconds", 60),
+            DiscordUnmatchedLogPath = ReadString(section, "DiscordUnmatchedLogPath", "data/discord-unmatched.log"),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds

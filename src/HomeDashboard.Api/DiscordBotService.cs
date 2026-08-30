@@ -176,11 +176,17 @@ public sealed class DiscordBotService(
     {
         if (rawMessage is not SocketUserMessage message || message.Author.IsBot || message.Source != MessageSource.User) return;
         var configuration = activeConfiguration;
-        if (configuration is null || !TryReadMessageCommand(message.Content, configuration, out var command)) return;
+        if (configuration is null || !TryReadMessageCommand(message, configuration, out var command, out var reply)) return;
         if (!IsAuthorized(message, configuration)) return;
         var now = DateTimeOffset.UtcNow;
         if (lastCommands.TryGetValue(message.Author.Id, out var lastCommand) && now - lastCommand < TimeSpan.FromSeconds(2)) return;
         lastCommands[message.Author.Id] = now;
+
+        if (reply is not null)
+        {
+            await message.Channel.SendMessageAsync(reply, allowedMentions: AllowedMentions.None);
+            return;
+        }
 
         try
         {
@@ -438,6 +444,10 @@ public sealed class DiscordBotService(
 
     private async Task<CommandCenterActionResult> PostCommandAsync(string command, string actor, CancellationToken cancellationToken)
     {
+        var parsed = DiscordNaturalLanguageParser.Parse(command, dashboardOptions.Value.DiscordUnmatchedLogPath);
+        if (!parsed.Matched)
+            return new CommandCenterActionResult(false, parsed.Reply ?? "That command was not recognized.");
+        command = parsed.Command;
         var apiKey = security.Value.DashboardApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
             return new CommandCenterActionResult(false, "Discord command intake is unavailable because the dashboard API key is not configured.");
@@ -454,23 +464,36 @@ public sealed class DiscordBotService(
             response.IsSuccessStatusCode ? "Command completed." : "The command could not be completed.");
     }
 
-    private static bool TryReadMessageCommand(string content, DiscordBotConfiguration configuration, out string command)
+    private bool TryReadMessageCommand(SocketUserMessage message, DiscordBotConfiguration configuration, out string command, out string? reply)
     {
+        var content = message.Content;
+        reply = null;
+        var isIntake = false;
         if (content.StartsWith(configuration.Prefix, StringComparison.OrdinalIgnoreCase))
         {
             command = content[configuration.Prefix.Length..].Trim();
-            return true;
+            isIntake = true;
         }
-
-        const string slashIntake = "/hd ";
-        if (content.StartsWith(slashIntake, StringComparison.OrdinalIgnoreCase))
+        else
         {
-            command = content[slashIntake.Length..].Trim();
-            return true;
+            const string slashIntake = "/hd ";
+            if (content.StartsWith(slashIntake, StringComparison.OrdinalIgnoreCase))
+            {
+                command = content[slashIntake.Length..].Trim();
+                isIntake = true;
+            }
+            else if (message.Channel is SocketDMChannel)
+            {
+                command = content.Trim();
+                isIntake = true;
+            }
+            else command = "";
         }
-
-        command = "";
-        return false;
+        if (!isIntake) return false;
+        var parsed = DiscordNaturalLanguageParser.Parse(command, dashboardOptions.Value.DiscordUnmatchedLogPath);
+        command = parsed.Command;
+        reply = parsed.Reply;
+        return true;
     }
 
     private static string ReadIntakeCommand(IReadOnlyCollection<SocketSlashCommandDataOption> options) =>
@@ -530,6 +553,7 @@ public sealed class DiscordBotService(
     {
         if (!configuration.AllowedUserIds.Contains(message.Author.Id)) return false;
         if (configuration.AllowedChannelIds.Count > 0 && !configuration.AllowedChannelIds.Contains(message.Channel.Id)) return false;
+        if (message.Channel is SocketDMChannel) return true;
         if (message.Channel is SocketGuildChannel guildChannel && configuration.AllowedGuildIds.Count > 0
             && !configuration.AllowedGuildIds.Contains(guildChannel.Guild.Id)) return false;
         return message.Channel is SocketGuildChannel || configuration.AllowedGuildIds.Count == 0;
