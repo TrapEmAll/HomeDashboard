@@ -379,10 +379,11 @@ public sealed class CommandCenterServiceTests : IDisposable
     {
         var service = CreateService();
         var audit = new RecordingCommandStore();
+        EnableDiscordProfileMapping(service);
         var router = CreateRouter(service);
 
         var result = await DiscordCommandEndpoint.HandleAsync(
-            new DiscordCommandRequest("shopping add milk | Groceries", "Alex"),
+            new DiscordCommandRequest("shopping add milk | Groceries", "Alex", 123),
             router,
             audit,
             CancellationToken.None);
@@ -401,12 +402,13 @@ public sealed class CommandCenterServiceTests : IDisposable
         var service = CreateService();
         var restarts = new RecordingRestartCoordinator();
         var operations = new RecordingOperationsService();
+        EnableDiscordProfileMapping(service);
         var router = CreateRouter(service, restarts, operations);
 
-        var restart = await router.ExecuteAsync("restart service Plex", "Alex", CancellationToken.None);
-        var maintenance = await router.ExecuteAsync("maintenance Patch server", "Alex", CancellationToken.None);
-        var status = await router.ExecuteAsync("health", "Alex", CancellationToken.None);
-        var unknown = await router.ExecuteAsync("operate the lights", "Alex", CancellationToken.None);
+        var restart = await router.ExecuteAsync("restart service Plex", "Alex", 123, CancellationToken.None);
+        var maintenance = await router.ExecuteAsync("maintenance Patch server", "Alex", 123, CancellationToken.None);
+        var status = await router.ExecuteAsync("health", "Alex", 123, CancellationToken.None);
+        var unknown = await router.ExecuteAsync("operate the lights", "Alex", 123, CancellationToken.None);
 
         Assert.True(restart.Succeeded);
         Assert.Equal("plex", restarts.ServiceId);
@@ -442,7 +444,8 @@ public sealed class CommandCenterServiceTests : IDisposable
         {
             ["prefix"] = "!home",
             ["allowedUserIds"] = "123, 456",
-            ["allowedChannelIds"] = "789"
+            ["allowedChannelIds"] = "789",
+            ["profileMappings"] = "123:owner"
         }));
 
         var configuration = service.GetDiscordConfiguration();
@@ -451,6 +454,7 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Equal("!home", configuration.Prefix);
         Assert.Contains(123UL, configuration.AllowedUserIds);
         Assert.Contains(789UL, configuration.AllowedChannelIds);
+        Assert.Equal("owner", configuration.ProfileMappings[123UL]);
         Assert.Equal("!home", service.UpdateIntegration("discord", new UpdateIntegrationRequest(
             "Discord", null, true, null)).Settings["prefix"]);
     }
@@ -487,6 +491,12 @@ public sealed class CommandCenterServiceTests : IDisposable
         var options = Options.Create(new DashboardOptions { DataPath = Path.Combine(directory, "homedashboard-state.json") });
         return new CommandCenterService(options, clientFactory ?? new StaticHttpClientFactory(), commandStore ?? new NoopCommandStore(), NullLogger<CommandCenterService>.Instance);
     }
+
+    private static void EnableDiscordProfileMapping(CommandCenterService service) => service.UpdateIntegration("discord", new UpdateIntegrationRequest(
+        "Discord", null, true, "bot-token", new Dictionary<string, string>
+        {
+            ["profileMappings"] = "123:owner"
+        }));
 
     private static DiscordCommandRouter CreateRouter(
         ICommandCenterService commandCenter,
@@ -646,3 +656,4 @@ public sealed class CommandCenterServiceTests : IDisposable
             Task.FromResult(new ArrMediaRequestResult(true, "Dune: Part Two (2024) was added and a search was started in Radarr.", movie, "Submitted"));
     }
 }
+
