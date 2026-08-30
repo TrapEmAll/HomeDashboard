@@ -21,6 +21,7 @@ public sealed class DiscordBotService(
     ILogger<DiscordBotService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<ulong, DateTimeOffset> lastCommands = new();
+    private readonly ConcurrentDictionary<ulong, RateLimitState> rateLimits = new();
     private readonly ConcurrentDictionary<string, PendingConfirmation> confirmations = new();
     private DiscordSocketClient? client;
     private DiscordBotConfiguration? activeConfiguration;
@@ -178,6 +179,11 @@ public sealed class DiscordBotService(
         if (rawMessage is not SocketUserMessage message || message.Author.IsBot || message.Source != MessageSource.User) return;
         var configuration = activeConfiguration;
         if (configuration is null || !TryReadMessageCommand(message, configuration, out var command, out var reply)) return;
+        if (!TryConsumeRateLimit(message.Author.Id, message.Author.Username, out var notify))
+        {
+            if (notify) await message.Channel.SendMessageAsync("Slow down. Please wait before sending more HomeDashboard commands.", allowedMentions: AllowedMentions.None);
+            return;
+        }
         if (!IsAuthorized(message, configuration)) return;
         var now = DateTimeOffset.UtcNow;
         if (lastCommands.TryGetValue(message.Author.Id, out var lastCommand) && now - lastCommand < TimeSpan.FromSeconds(2)) return;
@@ -231,6 +237,11 @@ public sealed class DiscordBotService(
     {
         var configuration = activeConfiguration;
         if (configuration is null || interaction.Data.Name is not (DiscordSlashCommandCatalog.Name or DiscordSlashCommandCatalog.IntakeName)) return;
+        if (!TryConsumeRateLimit(interaction.User.Id, interaction.User.Username, out var notify))
+        {
+            if (notify) await interaction.RespondAsync("Slow down. Please wait before sending more HomeDashboard commands.", ephemeral: true);
+            return;
+        }
         if (!IsAuthorized(interaction, configuration))
         {
             await interaction.RespondAsync("This HomeDashboard command is not available to your Discord account or channel.", ephemeral: true);
@@ -573,6 +584,44 @@ public sealed class DiscordBotService(
             string.Join(',', configuration.AllowedUserIds.Order()), string.Join(',', configuration.AllowedChannelIds.Order()),
             string.Join(',', configuration.AllowedGuildIds.Order()));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
+
+    private bool TryConsumeRateLimit(ulong userId, string actor, out bool notify)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var window = TimeSpan.FromSeconds(Math.Max(1, dashboardOptions.Value.DiscordRateLimitWindowSeconds));
+        var limit = Math.Max(1, dashboardOptions.Value.DiscordRateLimitCommands);
+        var state = rateLimits.GetOrAdd(userId, static _ => new RateLimitState());
+
+        lock (state.Gate)
+        {
+            while (state.Timestamps.Count > 0 && now - state.Timestamps.Peek() >= window)
+                state.Timestamps.Dequeue();
+
+            if (state.Timestamps.Count >= limit)
+            {
+                notify = !state.BreachReported;
+                state.BreachReported = true;
+                if (notify)
+                {
+                    auditStore.AddAuditEvent(new AuditEvent(Guid.NewGuid().ToString("n"), AuditEventType.DiscordRateLimitRejected,
+                        "Discord command rate limit exceeded.", null, null, actor, now, null, false));
+                }
+                return false;
+            }
+
+            state.Timestamps.Enqueue(now);
+            state.BreachReported = false;
+            notify = false;
+            return true;
+        }
+    }
+
+    private sealed class RateLimitState
+    {
+        public object Gate { get; } = new();
+        public Queue<DateTimeOffset> Timestamps { get; } = new();
+        public bool BreachReported { get; set; }
     }
 }
 
