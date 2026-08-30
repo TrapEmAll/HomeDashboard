@@ -34,7 +34,7 @@ internal static class DiscordCommandEndpoint
                 return emptyResult;
             }
 
-            var routed = await router.ExecuteAsync(command, actor, cancellationToken);
+            var routed = await router.ExecuteAsync(command, actor, request.DiscordUserId, cancellationToken);
             var result = routed with { AuditId = routed.AuditId ?? auditId };
             RecordCompletion(auditStore, auditId, actor, result);
             return result;
@@ -65,3 +65,4 @@ internal static class DiscordCommandEndpoint
         return value.Length <= length ? value : value[..(length - 3)] + "...";
     }
 }
+
