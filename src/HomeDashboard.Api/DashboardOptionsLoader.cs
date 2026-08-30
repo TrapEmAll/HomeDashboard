@@ -37,6 +37,7 @@ public static class DashboardOptionsLoader
             DiscordUnmatchedLogPath = ReadString(section, "DiscordUnmatchedLogPath", "data/discord-unmatched.log"),
             DiscordRateLimitCommands = ReadPositiveInt(section, "DiscordRateLimitCommands", 10),
             DiscordRateLimitWindowSeconds = ReadPositiveInt(section, "DiscordRateLimitWindowSeconds", 60),
+            DiscordApiHealthFailureThreshold = ReadPositiveInt(section, "DiscordApiHealthFailureThreshold", 3),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds

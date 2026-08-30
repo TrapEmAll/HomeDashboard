@@ -17,6 +17,7 @@ public sealed class DashboardOptions
     public string DiscordUnmatchedLogPath { get; init; } = "data/discord-unmatched.log";
     public int DiscordRateLimitCommands { get; init; } = 10;
     public int DiscordRateLimitWindowSeconds { get; init; } = 60;
+    public int DiscordApiHealthFailureThreshold { get; init; } = 3;
 }
 
 public sealed class ServiceDefinition

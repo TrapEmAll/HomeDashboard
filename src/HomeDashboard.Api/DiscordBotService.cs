@@ -24,6 +24,14 @@ public sealed class DiscordBotService(
     private readonly ConcurrentDictionary<ulong, RateLimitState> rateLimits = new();
     private readonly ConcurrentDictionary<ulong, DiscordSessionContext> sessionContexts = new();
     private readonly ConcurrentDictionary<string, PendingConfirmation> confirmations = new();
+    private readonly object healthGate = new();
+    private int apiHealthFailures;
+    private bool apiOutageNoticeSent;
+    private volatile bool apiExecutionPaused;
+    private DateTimeOffset? gatewayDisconnectedAt;
+    private DateTimeOffset nextGatewayReconnectAt = DateTimeOffset.MinValue;
+    private int gatewayReconnectAttempt;
+    private int intentionalDisconnect;
     private static readonly TimeSpan SessionContextTtl = TimeSpan.FromMinutes(5);
     private DiscordSocketClient? client;
     private DiscordBotConfiguration? activeConfiguration;
@@ -43,6 +51,7 @@ public sealed class DiscordBotService(
                     var fingerprint = configuration is null ? null : Fingerprint(configuration);
                     if (configuration is null)
                     {
+                        ResetGatewayReconnect();
                         await DisconnectAsync();
                     }
                     else if (configuration.AllowedUserIds.Count == 0)
@@ -50,13 +59,28 @@ public sealed class DiscordBotService(
                         await DisconnectAsync();
                         commandCenter.SetIntegrationConnection("discord", false, "Add at least one allowed Discord user ID.");
                     }
-                    else if (client is null || fingerprint != activeFingerprint)
+                    else if (client is null && DateTimeOffset.UtcNow >= nextGatewayReconnectAt)
                     {
                         await DisconnectAsync();
                         await ConnectAsync(configuration, fingerprint!, stoppingToken);
                     }
+                    else if (client is not null && fingerprint != activeFingerprint)
+                    {
+                        await DisconnectAsync();
+                        await ConnectAsync(configuration, fingerprint!, stoppingToken);
+                    }
+                    else if (client?.ConnectionState == ConnectionState.Disconnected
+                        && gatewayDisconnectedAt is { } disconnectedAt
+                        && DateTimeOffset.UtcNow - disconnectedAt >= TimeSpan.FromSeconds(30)
+                        && DateTimeOffset.UtcNow >= nextGatewayReconnectAt)
+                    {
+                        await ReconnectGatewayAsync(configuration, fingerprint!, stoppingToken);
+                    }
                     else
                     {
+                        var apiHealth = await CheckApiHealthAsync(stoppingToken);
+                        if (apiHealth.Notice is not null)
+                            await PostApiHealthNoticeAsync(configuration, apiHealth.Notice);
                         await PostScheduledBriefingAsync(configuration, stoppingToken);
                     }
                 }
@@ -64,6 +88,7 @@ public sealed class DiscordBotService(
                 {
                     logger.LogWarning(ex, "Discord bot connection failed");
                     commandCenter.SetIntegrationConnection("discord", false, $"Connection failed: {ex.Message}");
+                    ScheduleGatewayReconnect();
                     await DisconnectAsync();
                 }
 
@@ -117,11 +142,16 @@ public sealed class DiscordBotService(
 
     private async Task DisconnectAsync()
     {
+        Interlocked.Exchange(ref intentionalDisconnect, 1);
         var socket = client;
         client = null;
         activeConfiguration = null;
         activeFingerprint = null;
-        if (socket is null) return;
+        if (socket is null)
+        {
+            Interlocked.Exchange(ref intentionalDisconnect, 0);
+            return;
+        }
         socket.MessageReceived -= HandleMessageAsync;
         socket.SlashCommandExecuted -= HandleSlashCommandAsync;
         socket.ButtonExecuted -= HandleButtonAsync;
@@ -133,6 +163,7 @@ public sealed class DiscordBotService(
         try { await socket.StopAsync(); } catch (Exception ex) { logger.LogDebug(ex, "Discord socket stop failed"); }
         try { await socket.LogoutAsync(); } catch (Exception ex) { logger.LogDebug(ex, "Discord logout failed"); }
         socket.Dispose();
+        Interlocked.Exchange(ref intentionalDisconnect, 0);
     }
 
     private async Task HandleReadyAsync()
@@ -170,6 +201,11 @@ public sealed class DiscordBotService(
                 registeredCommandFingerprint = registrationKey;
             }
             var scope = configuration.AllowedGuildIds.Count > 0 ? "server slash commands ready" : "global slash commands registered";
+            if (gatewayDisconnectedAt is not null)
+                RecordDiscordAudit(AuditEventType.DiscordGatewayReconnect, "Discord gateway reconnected.", true);
+            gatewayDisconnectedAt = null;
+            gatewayReconnectAttempt = 0;
+            nextGatewayReconnectAt = DateTimeOffset.MinValue;
             commandCenter.SetIntegrationConnection("discord", true, $"Connected as {socket.CurrentUser.Username}; {scope}");
         }
         catch (Exception ex)
@@ -181,8 +217,104 @@ public sealed class DiscordBotService(
 
     private Task HandleDisconnectedAsync(Exception exception)
     {
+        if (Volatile.Read(ref intentionalDisconnect) != 0) return Task.CompletedTask;
+        if (gatewayDisconnectedAt is null)
+        {
+            gatewayDisconnectedAt = DateTimeOffset.UtcNow;
+            nextGatewayReconnectAt = gatewayDisconnectedAt.Value.AddSeconds(30);
+            RecordDiscordAudit(AuditEventType.DiscordGatewayReconnect,
+                $"Discord gateway disconnected; automatic reconnect is active. {exception.Message}", false);
+        }
         commandCenter.SetIntegrationConnection("discord", false, exception.Message);
         return Task.CompletedTask;
+    }
+
+    private async Task ReconnectGatewayAsync(DiscordBotConfiguration configuration, string fingerprint, CancellationToken cancellationToken)
+    {
+        gatewayReconnectAttempt++;
+        RecordDiscordAudit(AuditEventType.DiscordGatewayReconnect,
+            $"Discord gateway fallback reconnect attempt {gatewayReconnectAttempt}.", false);
+        await DisconnectAsync();
+        await ConnectAsync(configuration, fingerprint, cancellationToken);
+    }
+
+    private void ScheduleGatewayReconnect()
+    {
+        gatewayReconnectAttempt = Math.Min(gatewayReconnectAttempt + 1, 6);
+        var seconds = Math.Min(300, 10 * Math.Pow(2, gatewayReconnectAttempt - 1));
+        nextGatewayReconnectAt = DateTimeOffset.UtcNow.AddSeconds(seconds);
+        RecordDiscordAudit(AuditEventType.DiscordGatewayReconnect,
+            $"Discord reconnect scheduled in {seconds:0} seconds (attempt {gatewayReconnectAttempt}).", false);
+    }
+
+    private void ResetGatewayReconnect()
+    {
+        gatewayDisconnectedAt = null;
+        gatewayReconnectAttempt = 0;
+        nextGatewayReconnectAt = DateTimeOffset.MinValue;
+    }
+
+    private async Task<(bool CanExecute, string? Notice)> CheckApiHealthAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await clients.CreateClient("command-center").GetAsync("http://localhost:5000/health", cancellationToken);
+            if (!response.IsSuccessStatusCode) throw new HttpRequestException($"Health check returned {(int)response.StatusCode}.");
+
+            var recovered = false;
+            var threshold = Math.Max(1, dashboardOptions.Value.DiscordApiHealthFailureThreshold);
+            lock (healthGate)
+            {
+                recovered = apiHealthFailures >= threshold;
+                apiHealthFailures = 0;
+                apiOutageNoticeSent = false;
+                apiExecutionPaused = false;
+            }
+            if (recovered)
+                RecordDiscordAudit(AuditEventType.DiscordApiOutage, "HomeDashboard API is reachable again.", true);
+            return (true, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            bool degraded;
+            bool notify;
+            lock (healthGate)
+            {
+                apiHealthFailures++;
+                degraded = apiHealthFailures >= Math.Max(1, dashboardOptions.Value.DiscordApiHealthFailureThreshold);
+                notify = degraded && !apiOutageNoticeSent;
+                if (notify) apiOutageNoticeSent = true;
+                apiExecutionPaused = degraded;
+            }
+            if (notify)
+                RecordDiscordAudit(AuditEventType.DiscordApiOutage,
+                    $"HomeDashboard API unavailable after {apiHealthFailures} consecutive health checks: {ex.Message}", false);
+            return (!degraded, notify ? "HomeDashboard API is unavailable. Inbound commands are paused until it recovers." : null);
+        }
+    }
+
+    private void RecordDiscordAudit(AuditEventType type, string message, bool succeeded)
+        => auditStore.AddAuditEvent(new AuditEvent(Guid.NewGuid().ToString("n"), type, message,
+            null, null, "discord", DateTimeOffset.UtcNow, null, succeeded));
+
+    private async Task PostApiHealthNoticeAsync(DiscordBotConfiguration configuration, string notice)
+    {
+        var channelIds = configuration.BriefingChannelId != 0
+            ? new[] { configuration.BriefingChannelId }
+            : configuration.AllowedChannelIds.ToArray();
+        foreach (var channelId in channelIds)
+        {
+            if (client?.GetChannel(channelId) is not IMessageChannel channel) continue;
+            try
+            {
+                await channel.SendMessageAsync(notice, allowedMentions: AllowedMentions.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Discord API health notice could not be posted to channel {ChannelId}", channelId);
+            }
+            break;
+        }
     }
 
     private Task HandleLogAsync(LogMessage message)
@@ -210,6 +342,12 @@ public sealed class DiscordBotService(
         if (reply is not null)
         {
             await message.Channel.SendMessageAsync(reply, allowedMentions: AllowedMentions.None);
+            return;
+        }
+
+        if (apiExecutionPaused)
+        {
+            await message.Channel.SendMessageAsync("Inbound commands are paused while the HomeDashboard API is unavailable.", allowedMentions: AllowedMentions.None);
             return;
         }
 
@@ -263,6 +401,12 @@ public sealed class DiscordBotService(
         if (!IsAuthorized(interaction, configuration))
         {
             await interaction.RespondAsync("This HomeDashboard command is not available to your Discord account or channel.", ephemeral: true);
+            return;
+        }
+
+        if (apiExecutionPaused)
+        {
+            await interaction.RespondAsync("Inbound commands are paused while the HomeDashboard API is unavailable.", ephemeral: true);
             return;
         }
 
@@ -330,6 +474,12 @@ public sealed class DiscordBotService(
         if (!owner.Equals(interaction.User.Id.ToString(), StringComparison.Ordinal))
         {
             await interaction.RespondAsync("Only the person who started this request can choose its release.", ephemeral: true);
+            return;
+        }
+
+        if (apiExecutionPaused)
+        {
+            await interaction.RespondAsync("Inbound commands are paused while the HomeDashboard API is unavailable.", ephemeral: true);
             return;
         }
 
@@ -415,6 +565,12 @@ public sealed class DiscordBotService(
         }
 
         var confirmed = interaction.Data.CustomId.EndsWith(":yes", StringComparison.Ordinal);
+        if (confirmed && apiExecutionPaused)
+        {
+            await interaction.RespondAsync("Inbound commands are paused while the HomeDashboard API is unavailable.", ephemeral: true);
+            pending.Completion.TrySetResult(new CommandCenterActionResult(false, "Inbound commands are paused while the HomeDashboard API is unavailable."));
+            return;
+        }
         await interaction.UpdateAsync(message =>
         {
             message.Content = "Processing HomeDashboard command...";

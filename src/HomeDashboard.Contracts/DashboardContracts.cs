@@ -243,7 +243,9 @@ public enum AuditEventType
     MediaCommand,
     DiscordCommandReceived,
     DiscordCommandCompleted,
-    DiscordRateLimitRejected
+    DiscordRateLimitRejected,
+    DiscordGatewayReconnect,
+    DiscordApiOutage
 }
 
 public sealed record SetupStatus(
