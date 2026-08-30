@@ -22,7 +22,9 @@ public sealed class DiscordBotService(
 {
     private readonly ConcurrentDictionary<ulong, DateTimeOffset> lastCommands = new();
     private readonly ConcurrentDictionary<ulong, RateLimitState> rateLimits = new();
+    private readonly ConcurrentDictionary<ulong, DiscordSessionContext> sessionContexts = new();
     private readonly ConcurrentDictionary<string, PendingConfirmation> confirmations = new();
+    private static readonly TimeSpan SessionContextTtl = TimeSpan.FromMinutes(5);
     private DiscordSocketClient? client;
     private DiscordBotConfiguration? activeConfiguration;
     private string? activeFingerprint;
@@ -458,7 +460,8 @@ public sealed class DiscordBotService(
         var parsed = DiscordNaturalLanguageParser.Parse(command, dashboardOptions.Value.DiscordUnmatchedLogPath);
         if (!parsed.Matched)
             return new CommandCenterActionResult(false, parsed.Reply ?? "That command was not recognized.");
-        command = parsed.Command;
+        command = ResolveSessionContext(parsed.Command, discordUserId);
+        RememberSessionContext(parsed.Entity, discordUserId);
         var apiKey = security.Value.DashboardApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
             return new CommandCenterActionResult(false, "Discord command intake is unavailable because the dashboard API key is not configured.");
@@ -474,6 +477,33 @@ public sealed class DiscordBotService(
         return result ?? new CommandCenterActionResult(response.IsSuccessStatusCode,
             response.IsSuccessStatusCode ? "Command completed." : "The command could not be completed.");
     }
+
+    private string ResolveSessionContext(string command, ulong? discordUserId)
+    {
+        if (discordUserId is not { } userId || !sessionContexts.TryGetValue(userId, out var context))
+            return command;
+        if (DateTimeOffset.UtcNow - context.LastReferencedAt > SessionContextTtl)
+        {
+            sessionContexts.TryRemove(userId, out _);
+            return command;
+        }
+
+        return string.Join(' ', command.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => IsContextReference(part) ? context.Entity : part));
+    }
+
+    private void RememberSessionContext(string? entity, ulong? discordUserId)
+    {
+        if (discordUserId is { } userId && !string.IsNullOrWhiteSpace(entity) && !IsContextReference(entity))
+            sessionContexts[userId] = new DiscordSessionContext(entity.Trim(), DateTimeOffset.UtcNow);
+    }
+
+    private static bool IsContextReference(string value) => value.Trim().TrimEnd('?', '.', '!')
+        .Equals("it", StringComparison.OrdinalIgnoreCase)
+        || value.Trim().TrimEnd('?', '.', '!').Equals("that", StringComparison.OrdinalIgnoreCase)
+        || value.Trim().TrimEnd('?', '.', '!').Equals("this", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record DiscordSessionContext(string Entity, DateTimeOffset LastReferencedAt);
 
     private bool TryReadMessageCommand(SocketUserMessage message, DiscordBotConfiguration configuration, out string command, out string? reply)
     {
