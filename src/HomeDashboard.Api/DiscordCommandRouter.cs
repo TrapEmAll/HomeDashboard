@@ -9,7 +9,9 @@ public sealed class DiscordCommandRouter(
     ISystemStatsProvider systemStats,
     ISetupService setup,
     IOperationsService operations,
-    ICommandCenterService commandCenter)
+    ICommandCenterService commandCenter,
+    IDashboardService? dashboard = null,
+    IAgentCommandStore? commandStore = null)
 {
     public async Task<CommandCenterActionResult> ExecuteAsync(string command, string actor, ulong? discordUserId, CancellationToken cancellationToken)
     {
@@ -110,6 +112,46 @@ public sealed class DiscordCommandRouter(
 
     private async Task<CommandCenterActionResult> StatusAsync(CancellationToken cancellationToken)
     {
+        if (dashboard is null || commandStore is null)
+            return await LegacyStatusAsync(cancellationToken);
+
+        var snapshot = await dashboard.GetSnapshotAsync(cancellationToken);
+        var healthy = snapshot.Services.Count(item => item.Status == ServiceStatus.Online);
+        var degraded = snapshot.Services.Count(item => item.Status == ServiceStatus.Degraded);
+        var offline = snapshot.Services.Count(item => item.Status == ServiceStatus.Offline);
+        var allActiveAgents = snapshot.Agents.Where(item => item.Status == ServiceStatus.Online).ToArray();
+        var activeAgents = allActiveAgents.Take(8).ToArray();
+        var pendingCommands = commandStore.GetRecentCommands(50)
+            .Where(item => item.State is AgentCommandState.Queued or AgentCommandState.Running)
+            .ToArray();
+
+        var lines = new List<string>
+        {
+            $"Services: {healthy} healthy, {degraded} degraded, {offline} offline.",
+            "Agents: " + (activeAgents.Length == 0
+                ? "none active."
+                : string.Join(", ", activeAgents.Select(item => $"{item.AgentId} (last seen {item.LastSeenAt.LocalDateTime:g})"))
+                    + (allActiveAgents.Length > activeAgents.Length ? $" +{allActiveAgents.Length - activeAgents.Length} more." : "."))
+        };
+
+        var alerts = snapshot.Notifications
+            .Where(item => item.Severity != NotificationSeverity.Info)
+            .Take(6)
+            .Select(item => $"- {item.Severity}: {item.Title}")
+            .ToArray();
+        lines.Add(alerts.Length == 0 ? "Alerts: none unresolved." : "Alerts:\n" + string.Join("\n", alerts));
+
+        var commands = pendingCommands.Take(6)
+            .Select(item => $"- {item.State}: {item.Kind} on {item.AgentId}")
+            .ToArray();
+        lines.Add(commands.Length == 0 ? "Queue: no pending commands." : "Queue:\n" + string.Join("\n", commands));
+        lines.Add("Details: open the HomeDashboard web dashboard.");
+
+        return new CommandCenterActionResult(true, FitDiscordMessage(lines));
+    }
+
+    private async Task<CommandCenterActionResult> LegacyStatusAsync(CancellationToken cancellationToken)
+    {
         var serviceCards = await services.GetServicesAsync(cancellationToken);
         var stats = systemStats.GetStats();
         var online = serviceCards.Count(item => item.Status == ServiceStatus.Online);
@@ -117,6 +159,22 @@ public sealed class DiscordCommandRouter(
         var offline = serviceCards.Count(item => item.Status == ServiceStatus.Offline);
         return new CommandCenterActionResult(true,
             $"{online} online, {degraded} degraded, {offline} offline. {stats.Hostname}: CPU {stats.CpuPercent:0.#}%, memory {stats.MemoryUsedPercent:0.#}%.");
+    }
+
+    private static string FitDiscordMessage(IEnumerable<string> sections)
+    {
+        const int limit = 1900;
+        var result = new List<string>();
+        var length = 0;
+        foreach (var section in sections)
+        {
+            var addition = result.Count == 0 ? section : $"\n\n{section}";
+            if (length + addition.Length > limit) break;
+            result.Add(section);
+            length += addition.Length;
+        }
+
+        return string.Join("\n\n", result);
     }
 
     private async Task<ServiceCard?> ResolveServiceAsync(string query, CancellationToken cancellationToken)
