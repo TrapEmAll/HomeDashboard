@@ -36,7 +36,8 @@ public sealed record DiscordBotConfiguration(
     string Prefix,
     IReadOnlySet<ulong> AllowedUserIds,
     IReadOnlySet<ulong> AllowedChannelIds,
-    IReadOnlySet<ulong> AllowedGuildIds);
+    IReadOnlySet<ulong> AllowedGuildIds,
+    IReadOnlyDictionary<ulong, string> ProfileMappings);
 
 public sealed class CommandCenterService : ICommandCenterService
 {
@@ -470,7 +471,8 @@ public sealed class CommandCenterService : ICommandCenterService
                 string.IsNullOrWhiteSpace(integration.Settings.GetValueOrDefault("prefix")) ? "!hd" : Limit(integration.Settings["prefix"].Trim(), 20),
                 ParseIds(integration.Settings.GetValueOrDefault("allowedUserIds")),
                 ParseIds(integration.Settings.GetValueOrDefault("allowedChannelIds")),
-                ParseIds(integration.Settings.GetValueOrDefault("allowedGuildIds")));
+                ParseIds(integration.Settings.GetValueOrDefault("allowedGuildIds")),
+                ParseProfileMappings(integration.Settings.GetValueOrDefault("profileMappings")));
         }
     }
 
@@ -889,6 +891,20 @@ public sealed class CommandCenterService : ICommandCenterService
         ? new HashSet<ulong>()
         : value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(item => ulong.TryParse(item, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
+    private static IReadOnlyDictionary<ulong, string> ParseProfileMappings(string? value)
+    {
+        var mappings = new Dictionary<ulong, string>();
+        if (string.IsNullOrWhiteSpace(value)) return mappings;
+
+        foreach (var item in value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = item.Split([':', '='], 2, StringSplitOptions.TrimEntries);
+            if (parts.Length == 2 && ulong.TryParse(parts[0], out var userId) && userId > 0 && parts[1].Length > 0)
+                mappings[userId] = parts[1];
+        }
+
+        return mappings;
+    }
     private static bool IsWithinRoot(string path, string root) => path.Equals(root, StringComparison.OrdinalIgnoreCase) || path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     private static bool FixedEquals(string left, string right)
     {
@@ -976,3 +992,4 @@ public sealed class CommandCenterService : ICommandCenterService
         public List<CommandCenterNotification> Notifications { get; init; } = [];
     }
 }
+
