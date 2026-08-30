@@ -11,6 +11,7 @@ namespace HomeDashboard.Api;
 
 public sealed class DiscordBotService(
     ICommandCenterService commandCenter,
+    DiscordCommandRouter router,
     IAgentSnapshotStore agentSnapshots,
     IAgentCommandStore auditStore,
     DiscordCommandProcessor processor,
@@ -308,7 +309,7 @@ public sealed class DiscordBotService(
             var selectionId = interaction.Data.Values.FirstOrDefault();
             var response = string.IsNullOrWhiteSpace(selectionId)
                 ? "No release was selected."
-                : FormatResult(await PostCommandAsync($"media add {selectionId}", interaction.User.Username, CancellationToken.None));
+                : FormatResult(await PostCommandAsync($"media add {selectionId}", interaction.User.Username, interaction.User.Id, CancellationToken.None));
             await interaction.UpdateAsync(message =>
             {
                 message.Content = LimitMessage(response);
@@ -346,11 +347,10 @@ public sealed class DiscordBotService(
         CancellationToken cancellationToken)
     {
         if (!TryReadMachineCommand(command, out var agentId))
-            return await PostCommandAsync(command, actor, cancellationToken);
+            return await PostCommandAsync(command, actor, userId, cancellationToken);
 
-        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
-        if (snapshot.Profiles.All(profile => !profile.Active || !profile.Role.Equals("Administrator", StringComparison.OrdinalIgnoreCase)))
-            return RejectMachine(command, "Machine actions require an active Administrator profile.", actor);
+        var authorization = await router.AuthorizeAsync(command, userId, cancellationToken);
+        if (authorization is not null) return authorization;
 
         var agent = agentSnapshots.GetLatest(agentId);
         if (agent is null || !agent.MachineActionsEnabled)
@@ -401,7 +401,7 @@ public sealed class DiscordBotService(
 
         try
         {
-            var confirmedResult = await PostCommandAsync(pending.Command, pending.Actor, CancellationToken.None);
+            var confirmedResult = await PostCommandAsync(pending.Command, pending.Actor, pending.UserId, CancellationToken.None);
             pending.Completion.TrySetResult(confirmedResult);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -442,7 +442,7 @@ public sealed class DiscordBotService(
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private async Task<CommandCenterActionResult> PostCommandAsync(string command, string actor, CancellationToken cancellationToken)
+    private async Task<CommandCenterActionResult> PostCommandAsync(string command, string actor, ulong? discordUserId, CancellationToken cancellationToken)
     {
         var parsed = DiscordNaturalLanguageParser.Parse(command, dashboardOptions.Value.DiscordUnmatchedLogPath);
         if (!parsed.Matched)
@@ -454,7 +454,7 @@ public sealed class DiscordBotService(
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:5000/api/command-center/discord-command")
         {
-            Content = JsonContent.Create(new DiscordCommandRequest(command, actor))
+            Content = JsonContent.Create(new DiscordCommandRequest(command, actor, discordUserId))
         };
         request.Headers.Add("X-HomeDashboard-Key", apiKey);
 
