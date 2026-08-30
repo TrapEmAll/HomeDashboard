@@ -379,11 +379,11 @@ public sealed class CommandCenterServiceTests : IDisposable
     {
         var service = CreateService();
         var audit = new RecordingCommandStore();
-        var processor = new DiscordCommandProcessor(service);
+        var router = CreateRouter(service);
 
         var result = await DiscordCommandEndpoint.HandleAsync(
             new DiscordCommandRequest("shopping add milk | Groceries", "Alex"),
-            processor,
+            router,
             audit,
             CancellationToken.None);
 
@@ -393,6 +393,44 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Contains(snapshot.Shopping, item => item.Name == "milk");
         Assert.Contains(audit.Events, item => item.Type == AuditEventType.DiscordCommandReceived && item.Actor == "Alex");
         Assert.Contains(audit.Events, item => item.Type == AuditEventType.DiscordCommandCompleted && item.Actor == "Alex" && item.Succeeded);
+    }
+
+    [Fact]
+    public async Task DiscordCommandRouterMapsOperationalCommands()
+    {
+        var service = CreateService();
+        var restarts = new RecordingRestartCoordinator();
+        var operations = new RecordingOperationsService();
+        var router = CreateRouter(service, restarts, operations);
+
+        var restart = await router.ExecuteAsync("restart service Plex", "Alex", CancellationToken.None);
+        var maintenance = await router.ExecuteAsync("maintenance Patch server", "Alex", CancellationToken.None);
+        var status = await router.ExecuteAsync("health", "Alex", CancellationToken.None);
+        var unknown = await router.ExecuteAsync("operate the lights", "Alex", CancellationToken.None);
+
+        Assert.True(restart.Succeeded);
+        Assert.Equal("plex", restarts.ServiceId);
+        Assert.Equal("Alex", restarts.Request?.RequestedBy);
+        Assert.True(restarts.Request?.Confirmed);
+        Assert.True(maintenance.Succeeded);
+        Assert.Equal("Patch server", operations.Windows.Single().Title);
+        Assert.True(status.Succeeded);
+        Assert.Contains("online", status.Message);
+        Assert.False(unknown.Succeeded);
+        Assert.Contains("Supported commands", unknown.Message);
+    }
+
+    [Fact]
+    public async Task MachineActionsPreserveDiscordActor()
+    {
+        var commands = new RecordingCommandStore();
+        var service = CreateService(commandStore: commands);
+
+        var result = await service.ExecuteAsync(new CommandCenterActionRequest("machine.lock", "server-pc", true,
+            new Dictionary<string, string> { ["requestedBy"] = "Alex" }), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Alex", commands.MachineCommand?.RequestedBy);
     }
 
     [Fact]
@@ -443,12 +481,19 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Contains(789UL, reloaded.AllowedGuildIds);
     }
 
-    private CommandCenterService CreateService(IHttpClientFactory? clientFactory = null)
+    private CommandCenterService CreateService(IHttpClientFactory? clientFactory = null, IAgentCommandStore? commandStore = null)
     {
         Directory.CreateDirectory(directory);
         var options = Options.Create(new DashboardOptions { DataPath = Path.Combine(directory, "homedashboard-state.json") });
-        return new CommandCenterService(options, clientFactory ?? new StaticHttpClientFactory(), new NoopCommandStore(), NullLogger<CommandCenterService>.Instance);
+        return new CommandCenterService(options, clientFactory ?? new StaticHttpClientFactory(), commandStore ?? new NoopCommandStore(), NullLogger<CommandCenterService>.Instance);
     }
+
+    private static DiscordCommandRouter CreateRouter(
+        ICommandCenterService commandCenter,
+        IRestartCoordinator? restarts = null,
+        IOperationsService? operations = null) =>
+        new(new DiscordCommandProcessor(commandCenter), restarts ?? new RecordingRestartCoordinator(), new StaticServiceStatusProvider(),
+            new StaticSystemStatsProvider(), new StaticSetupService(), operations ?? new RecordingOperationsService(), commandCenter);
 
     public void Dispose()
     {
@@ -459,6 +504,68 @@ public sealed class CommandCenterServiceTests : IDisposable
     private sealed class StaticHttpClientFactory : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(new HttpClientHandler());
+    }
+
+    private sealed class StaticServiceStatusProvider : IServiceStatusProvider
+    {
+        public Task<IReadOnlyList<ServiceCard>> GetServicesAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<ServiceCard>>(
+            [
+                new ServiceCard("plex", "Plex", ServiceKind.Plex, "Media server", null, ServiceStatus.Online, true,
+                    DateTimeOffset.UtcNow, null, [])
+            ]);
+    }
+
+    private sealed class StaticSystemStatsProvider : ISystemStatsProvider
+    {
+        public SystemStats GetStats() => new("server-pc", 12.3, 45.6, [], DateTimeOffset.UtcNow);
+    }
+
+    private sealed class StaticSetupService : ISetupService
+    {
+        public SetupStatus GetStatus() => new(true, false, false, "server-pc", 1, 0);
+        public DashboardSettings GetSettings() => new("server-pc", true,
+        [
+            new ServiceSetting("plex", "Plex", ServiceKind.Plex, "Media server", null, null, false, true)
+        ], []);
+        public Task<SetupStatus> SaveAsync(SetupRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<DashboardSettings> UpdateSettingsAsync(UpdateDashboardSettingsRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingRestartCoordinator : IRestartCoordinator
+    {
+        public string? ServiceId { get; private set; }
+        public RestartRequest? Request { get; private set; }
+
+        public RestartResult QueueRestart(string serviceId, RestartRequest request)
+        {
+            ServiceId = serviceId;
+            Request = request;
+            return new RestartResult(serviceId, RestartState.Queued, "Restart queued for agent server-pc.", DateTimeOffset.UtcNow, "restart-command");
+        }
+    }
+
+    private sealed class RecordingOperationsService : IOperationsService
+    {
+        public List<MaintenanceWindow> Windows { get; } = [];
+        public Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<bool> ControlDownloadAsync(DownloadControlRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public IReadOnlyList<MaintenanceWindow> GetMaintenance() => Windows;
+        public MaintenanceWindow AddMaintenance(CreateMaintenanceWindowRequest request, string actor)
+        {
+            var window = new MaintenanceWindow(Guid.NewGuid().ToString("n"), request.Title, request.StartsAt, request.EndsAt,
+                request.ServiceId, request.SuppressAlerts, actor);
+            Windows.Add(window);
+            return window;
+        }
+        public bool RemoveMaintenance(string id) => Windows.RemoveAll(item => item.Id == id) > 0;
+        public void ReplaceMaintenance(IReadOnlyList<MaintenanceWindow> windows)
+        {
+            Windows.Clear();
+            Windows.AddRange(windows);
+        }
+        public Task<ServiceDiscoveryResult> DiscoverAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class RecordingHttpClientFactory : IHttpClientFactory
@@ -493,8 +600,14 @@ public sealed class CommandCenterServiceTests : IDisposable
     private sealed class RecordingCommandStore : IAgentCommandStore
     {
         public List<AuditEvent> Events { get; } = [];
+        public AgentCommand? MachineCommand { get; private set; }
         public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request) => throw new NotSupportedException();
-        public AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request) => throw new NotSupportedException();
+        public AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request)
+        {
+            MachineCommand = new AgentCommand("machine-command", agentId, kind, "machine", request.RequestedBy,
+                request.Reason, DateTimeOffset.UtcNow, AgentCommandState.Queued);
+            return MachineCommand;
+        }
         public AgentCommand? DequeueNext(string agentId) => null;
         public void Complete(string agentId, string commandId, AgentCommandCompletion completion) { }
         public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];

@@ -6,7 +6,7 @@ internal static class DiscordCommandEndpoint
 {
     public static async Task<CommandCenterActionResult> HandleAsync(
         DiscordCommandRequest request,
-        DiscordCommandProcessor processor,
+        DiscordCommandRouter router,
         IAgentCommandStore auditStore,
         CancellationToken cancellationToken)
     {
@@ -34,8 +34,8 @@ internal static class DiscordCommandEndpoint
                 return emptyResult;
             }
 
-            var message = await processor.ProcessAsync(command, actor, cancellationToken);
-            var result = new CommandCenterActionResult(true, message, AuditId: auditId);
+            var routed = await router.ExecuteAsync(command, actor, cancellationToken);
+            var result = routed with { AuditId = routed.AuditId ?? auditId };
             RecordCompletion(auditStore, auditId, actor, result);
             return result;
         }

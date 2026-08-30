@@ -686,7 +686,8 @@ public sealed class CommandCenterService : ICommandCenterService
     private CommandCenterActionResult QueueMachine(AgentCommandKind kind, CommandCenterActionRequest action)
     {
         var agentId = string.IsNullOrWhiteSpace(action.Target) ? defaultAgentId : action.Target;
-        var command = commandStore.EnqueueMachine(agentId, kind, new RestartRequest("dashboard", $"Approved {kind} command", true));
+        var requestedBy = action.Arguments?.GetValueOrDefault("requestedBy") ?? "dashboard";
+        var command = commandStore.EnqueueMachine(agentId, kind, new RestartRequest(requestedBy, $"Approved {kind} command", true));
         return new(true, $"{kind} queued for {agentId}.", AuditId: command.Id);
     }
 

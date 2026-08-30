@@ -78,6 +78,7 @@ builder.Services.AddSingleton<IOperationsService, OperationsService>();
 builder.Services.AddSingleton<IArrMediaRequestService, ArrMediaRequestService>();
 builder.Services.AddSingleton<ICommandCenterService, CommandCenterService>();
 builder.Services.AddSingleton<DiscordCommandProcessor>();
+builder.Services.AddSingleton<DiscordCommandRouter>();
 builder.Services.AddHostedService<DiscordBotService>();
 builder.Services.AddSingleton<FileDashboardStateStore>();
 builder.Services.AddSingleton<IAgentSnapshotStore>(provider => provider.GetRequiredService<FileDashboardStateStore>());
@@ -219,9 +220,9 @@ app.MapPost("/api/command-center/actions", async (CommandCenterActionRequest req
     var result = await commandCenter.ExecuteAsync(request, cancellationToken);
     return result.Succeeded ? Results.Ok(result) : result.RequiresConfirmation ? Results.Json(result, statusCode: StatusCodes.Status409Conflict) : Results.BadRequest(result);
 });
-app.MapPost("/api/command-center/discord-command", async (DiscordCommandRequest request, DiscordCommandProcessor processor, IAgentCommandStore auditStore, CancellationToken cancellationToken) =>
+app.MapPost("/api/command-center/discord-command", async (DiscordCommandRequest request, DiscordCommandRouter router, IAgentCommandStore auditStore, CancellationToken cancellationToken) =>
 {
-    var result = await DiscordCommandEndpoint.HandleAsync(request, processor, auditStore, cancellationToken);
+    var result = await DiscordCommandEndpoint.HandleAsync(request, router, auditStore, cancellationToken);
     return result.Succeeded ? Results.Ok(result) : Results.BadRequest(result);
 });
 app.MapPost("/api/command-center/batch", (CommandCenterBatchRequest request, ICommandCenterService commandCenter) =>
