@@ -1,15 +1,19 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.Concurrent;
+using System.Net.Http.Json;
 using Discord;
 using Discord.WebSocket;
 using HomeDashboard.Contracts;
+using Microsoft.Extensions.Options;
 
 namespace HomeDashboard.Api;
 
 public sealed class DiscordBotService(
     ICommandCenterService commandCenter,
     DiscordCommandProcessor processor,
+    IHttpClientFactory clients,
+    IOptions<DashboardSecurityOptions> security,
     ILogger<DiscordBotService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<ulong, DateTimeOffset> lastCommands = new();
@@ -115,7 +119,7 @@ public sealed class DiscordBotService(
             var registrationKey = $"{activeFingerprint}:{DiscordSlashCommandCatalog.SchemaVersion}";
             if (registeredCommandFingerprint != registrationKey)
             {
-                var command = DiscordSlashCommandCatalog.Build();
+                var commands = DiscordSlashCommandCatalog.Build();
                 if (configuration.AllowedGuildIds.Count > 0)
                 {
                     var registeredGuilds = 0;
@@ -127,7 +131,7 @@ public sealed class DiscordBotService(
                             logger.LogWarning("Discord bot is not a member of configured guild {GuildId}", guildId);
                             continue;
                         }
-                        await guild.BulkOverwriteApplicationCommandAsync([command]);
+                        await guild.BulkOverwriteApplicationCommandAsync(commands.ToArray());
                         registeredGuilds++;
                     }
                     if (registeredGuilds == 0)
@@ -135,11 +139,11 @@ public sealed class DiscordBotService(
                 }
                 else
                 {
-                    await socket.BulkOverwriteGlobalApplicationCommandsAsync([command]);
+                    await socket.BulkOverwriteGlobalApplicationCommandsAsync(commands.ToArray());
                 }
                 registeredCommandFingerprint = registrationKey;
             }
-            var scope = configuration.AllowedGuildIds.Count > 0 ? "server slash commands ready" : "global slash command registered";
+            var scope = configuration.AllowedGuildIds.Count > 0 ? "server slash commands ready" : "global slash commands registered";
             commandCenter.SetIntegrationConnection("discord", true, $"Connected as {socket.CurrentUser.Username}; {scope}");
         }
         catch (Exception ex)
@@ -166,18 +170,18 @@ public sealed class DiscordBotService(
     {
         if (rawMessage is not SocketUserMessage message || message.Author.IsBot || message.Source != MessageSource.User) return;
         var configuration = activeConfiguration;
-        if (configuration is null || !message.Content.StartsWith(configuration.Prefix, StringComparison.OrdinalIgnoreCase)) return;
+        if (configuration is null || !TryReadMessageCommand(message.Content, configuration, out var command)) return;
         if (!IsAuthorized(message, configuration)) return;
         var now = DateTimeOffset.UtcNow;
         if (lastCommands.TryGetValue(message.Author.Id, out var lastCommand) && now - lastCommand < TimeSpan.FromSeconds(2)) return;
         lastCommands[message.Author.Id] = now;
 
-        var command = message.Content[configuration.Prefix.Length..].Trim();
         try
         {
-            var response = await processor.ProcessAsync(command, message.Author.Username, CancellationToken.None);
+            var result = await PostCommandAsync(command, message.Author.Username, CancellationToken.None);
+            var response = FormatResult(result);
             if (configuration.Prefix != "!hd") response = response.Replace("!hd", configuration.Prefix, StringComparison.Ordinal);
-            if (response.StartsWith(DiscordCommandProcessor.AmbiguousMediaMessage, StringComparison.Ordinal)
+            if (result.Message.StartsWith(DiscordCommandProcessor.AmbiguousMediaMessage, StringComparison.Ordinal)
                 && MediaAddQuery(command) is { } query)
             {
                 var choices = await processor.SearchMediaChoicesAsync(query, CancellationToken.None);
@@ -208,7 +212,7 @@ public sealed class DiscordBotService(
     private async Task HandleSlashCommandAsync(SocketSlashCommand interaction)
     {
         var configuration = activeConfiguration;
-        if (configuration is null || interaction.Data.Name != DiscordSlashCommandCatalog.Name) return;
+        if (configuration is null || interaction.Data.Name is not (DiscordSlashCommandCatalog.Name or DiscordSlashCommandCatalog.IntakeName)) return;
         if (!IsAuthorized(interaction, configuration))
         {
             await interaction.RespondAsync("This HomeDashboard command is not available to your Discord account or channel.", ephemeral: true);
@@ -218,8 +222,9 @@ public sealed class DiscordBotService(
         try
         {
             await interaction.DeferAsync(ephemeral: true);
-            var (area, action, options) = ReadSlashCommand(interaction.Data.Options);
-            var response = await processor.ProcessStructuredAsync(area, action, options, interaction.User.Username, CancellationToken.None);
+            var response = interaction.Data.Name == DiscordSlashCommandCatalog.IntakeName
+                ? FormatResult(await PostCommandAsync(ReadIntakeCommand(interaction.Data.Options), interaction.User.Username, CancellationToken.None))
+                : await ProcessGuidedSlashCommandAsync(interaction, CancellationToken.None);
             await interaction.ModifyOriginalResponseAsync(message => message.Content = LimitMessage(response));
         }
         catch (Exception ex)
@@ -278,7 +283,7 @@ public sealed class DiscordBotService(
             var selectionId = interaction.Data.Values.FirstOrDefault();
             var response = string.IsNullOrWhiteSpace(selectionId)
                 ? "No release was selected."
-                : await processor.AddSelectedMediaAsync(selectionId, interaction.User.Username, CancellationToken.None);
+                : FormatResult(await PostCommandAsync($"media add {selectionId}", interaction.User.Username, CancellationToken.None));
             await interaction.UpdateAsync(message =>
             {
                 message.Content = LimitMessage(response);
@@ -292,6 +297,56 @@ public sealed class DiscordBotService(
                 await interaction.RespondAsync("The media request could not be completed. Search again and choose a current result.", ephemeral: true);
         }
     }
+
+    private async Task<string> ProcessGuidedSlashCommandAsync(SocketSlashCommand interaction, CancellationToken cancellationToken)
+    {
+        var (area, action, options) = ReadSlashCommand(interaction.Data.Options);
+        var command = DiscordCommandProcessor.ToCommandText(area, action, options);
+        return FormatResult(await PostCommandAsync(command, interaction.User.Username, cancellationToken));
+    }
+
+    private async Task<CommandCenterActionResult> PostCommandAsync(string command, string actor, CancellationToken cancellationToken)
+    {
+        var apiKey = security.Value.DashboardApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey))
+            return new CommandCenterActionResult(false, "Discord command intake is unavailable because the dashboard API key is not configured.");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "http://localhost:5000/api/command-center/discord-command")
+        {
+            Content = JsonContent.Create(new DiscordCommandRequest(command, actor))
+        };
+        request.Headers.Add("X-HomeDashboard-Key", apiKey);
+
+        using var response = await clients.CreateClient("command-center").SendAsync(request, cancellationToken);
+        var result = await response.Content.ReadFromJsonAsync<CommandCenterActionResult>(cancellationToken: cancellationToken);
+        return result ?? new CommandCenterActionResult(response.IsSuccessStatusCode,
+            response.IsSuccessStatusCode ? "Command completed." : "The command could not be completed.");
+    }
+
+    private static bool TryReadMessageCommand(string content, DiscordBotConfiguration configuration, out string command)
+    {
+        if (content.StartsWith(configuration.Prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            command = content[configuration.Prefix.Length..].Trim();
+            return true;
+        }
+
+        const string slashIntake = "/hd ";
+        if (content.StartsWith(slashIntake, StringComparison.OrdinalIgnoreCase))
+        {
+            command = content[slashIntake.Length..].Trim();
+            return true;
+        }
+
+        command = "";
+        return false;
+    }
+
+    private static string ReadIntakeCommand(IReadOnlyCollection<SocketSlashCommandDataOption> options) =>
+        options.FirstOrDefault(option => option.Name == "command")?.Value?.ToString() ?? "";
+
+    private static string FormatResult(CommandCenterActionResult result)
+        => $"{(result.Succeeded ? "Success" : "Failed")}: {result.Message}";
 
     private static (string Area, string Action, IReadOnlyDictionary<string, string> Options) ReadSlashCommand(
         IReadOnlyCollection<SocketSlashCommandDataOption> roots)
@@ -371,25 +426,8 @@ public sealed record DiscordCommandChoice(string Id, string Title, string? Subti
 public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter, IArrMediaRequestService? arrMedia = null)
 {
     public const string AmbiguousMediaMessage = "Several releases match that text.";
-    public async Task<string> ProcessAsync(string command, string actor, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(command) || command.Equals("help", StringComparison.OrdinalIgnoreCase)) return Help();
-        var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var area = parts[0].ToLowerInvariant();
-        if (area == "status") return await StatusAsync(cancellationToken);
-        if (area == "brief") return await BriefingAsync(cancellationToken);
-        if (area == "attention") return await AttentionAsync(cancellationToken);
-        if (area == "ask") return await AskAssistantAsync(command[parts[0].Length..].Trim(), cancellationToken);
-        if (area == "search") return Search(command[parts[0].Length..].Trim());
-        var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant() ?? "list";
-        var value = parts.ElementAtOrDefault(2)?.Trim() ?? "";
-        if (action is "add" or "done" or "remove" or "ack" or "snooze" or "set" && value.Length == 0)
-            return $"Missing command details. Use `/home help` or `!hd help`.";
-        return await ProcessCoreAsync(area, action, value, actor, cancellationToken);
-    }
 
-    public Task<string> ProcessStructuredAsync(string area, string action, IReadOnlyDictionary<string, string> options,
-        string actor, CancellationToken cancellationToken)
+    public static string ToCommandText(string area, string action, IReadOnlyDictionary<string, string> options)
     {
         string Get(string name, string fallback = "") => options.GetValueOrDefault(name) ?? fallback;
         string Item() => area switch
@@ -432,7 +470,30 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
             ("device", "control") => string.Join(" | ", Item(), Get("service", "toggle"), Get("confirm", "false")),
             _ => Item()
         };
-        return ProcessCoreAsync(area, action, value, actor, cancellationToken);
+        return string.IsNullOrWhiteSpace(value) ? $"{area} {action}".Trim() : $"{area} {action} {value}".Trim();
+    }
+
+    public async Task<string> ProcessAsync(string command, string actor, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command) || command.Equals("help", StringComparison.OrdinalIgnoreCase)) return Help();
+        var parts = command.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var area = parts[0].ToLowerInvariant();
+        if (area == "status") return await StatusAsync(cancellationToken);
+        if (area == "brief") return await BriefingAsync(cancellationToken);
+        if (area == "attention") return await AttentionAsync(cancellationToken);
+        if (area == "ask") return await AskAssistantAsync(command[parts[0].Length..].Trim(), cancellationToken);
+        if (area == "search") return Search(command[parts[0].Length..].Trim());
+        var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant() ?? "list";
+        var value = parts.ElementAtOrDefault(2)?.Trim() ?? "";
+        if (action is "add" or "done" or "remove" or "ack" or "snooze" or "set" && value.Length == 0)
+            return $"Missing command details. Use `/home help` or `!hd help`.";
+        return await ProcessCoreAsync(area, action, value, actor, cancellationToken);
+    }
+
+    public Task<string> ProcessStructuredAsync(string area, string action, IReadOnlyDictionary<string, string> options,
+        string actor, CancellationToken cancellationToken)
+    {
+        return ProcessAsync(ToCommandText(area, action, options), actor, cancellationToken);
     }
 
     public IReadOnlyList<DiscordCommandChoice> Autocomplete(string area, string query)

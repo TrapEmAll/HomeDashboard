@@ -219,6 +219,8 @@ public sealed record CommandCenterActionResult(
     bool RequiresConfirmation = false,
     string? AuditId = null);
 
+public sealed record DiscordCommandRequest(string Command, string Actor);
+
 public sealed record CommandCenterBatchRequest(
     IReadOnlyList<CommandCenterActionRequest>? Actions = null,
     IReadOnlyList<CommandCenterDeleteRequest>? Deletes = null);

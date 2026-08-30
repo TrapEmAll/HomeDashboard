@@ -357,9 +357,13 @@ public sealed class CommandCenterServiceTests : IDisposable
     [Fact]
     public void DiscordSlashCommandCatalogBuildsGuidedCommandTree()
     {
-        var command = DiscordSlashCommandCatalog.Build();
+        var commands = DiscordSlashCommandCatalog.Build();
+        var command = Assert.Single(commands, item => item.Name.Value == "home");
+        var intake = Assert.Single(commands, item => item.Name.Value == "hd");
 
         Assert.Equal("home", command.Name.Value);
+        Assert.Equal("hd", intake.Name.Value);
+        Assert.Contains(intake.Options.Value, option => option.Name == "command");
         Assert.Contains(command.Options.Value, option => option.Name == "task");
         Assert.Contains(command.Options.Value, option => option.Name == "shopping");
         Assert.Contains(command.Options.Value, option => option.Name == "system");
@@ -368,6 +372,27 @@ public sealed class CommandCenterServiceTests : IDisposable
         Assert.Contains(command.Options.Value, option => option.Name == "assistant");
         Assert.Contains(command.Options.Value, option => option.Name == "notify");
         Assert.Contains(command.Options.Value, option => option.Name == "help");
+    }
+
+    [Fact]
+    public async Task DiscordCommandEndpointProcessesAndAuditsReceiptAndCompletion()
+    {
+        var service = CreateService();
+        var audit = new RecordingCommandStore();
+        var processor = new DiscordCommandProcessor(service);
+
+        var result = await DiscordCommandEndpoint.HandleAsync(
+            new DiscordCommandRequest("shopping add milk | Groceries", "Alex"),
+            processor,
+            audit,
+            CancellationToken.None);
+
+        var snapshot = await service.GetSnapshotAsync(CancellationToken.None);
+        Assert.True(result.Succeeded);
+        Assert.Contains("Added", result.Message);
+        Assert.Contains(snapshot.Shopping, item => item.Name == "milk");
+        Assert.Contains(audit.Events, item => item.Type == AuditEventType.DiscordCommandReceived && item.Actor == "Alex");
+        Assert.Contains(audit.Events, item => item.Type == AuditEventType.DiscordCommandCompleted && item.Actor == "Alex" && item.Succeeded);
     }
 
     [Fact]
@@ -463,6 +488,18 @@ public sealed class CommandCenterServiceTests : IDisposable
         public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];
         public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count) => [];
         public void AddAuditEvent(AuditEvent auditEvent) { }
+    }
+
+    private sealed class RecordingCommandStore : IAgentCommandStore
+    {
+        public List<AuditEvent> Events { get; } = [];
+        public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request) => throw new NotSupportedException();
+        public AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request) => throw new NotSupportedException();
+        public AgentCommand? DequeueNext(string agentId) => null;
+        public void Complete(string agentId, string commandId, AgentCommandCompletion completion) { }
+        public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];
+        public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count) => Events;
+        public void AddAuditEvent(AuditEvent auditEvent) => Events.Add(auditEvent);
     }
 
     private sealed class FakeArrMediaRequestService : IArrMediaRequestService

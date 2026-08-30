@@ -5,9 +5,21 @@ namespace HomeDashboard.Api;
 internal static class DiscordSlashCommandCatalog
 {
     public const string Name = "home";
-    public const string SchemaVersion = "3";
+    public const string IntakeName = "hd";
+    public const string SchemaVersion = "4";
 
-    public static SlashCommandProperties Build()
+    public static IReadOnlyList<SlashCommandProperties> Build() => [BuildGuided(), BuildIntake()];
+
+    private static SlashCommandProperties BuildIntake()
+    {
+        return new SlashCommandBuilder()
+            .WithName(IntakeName)
+            .WithDescription("Run a HomeDashboard command")
+            .AddOption(Text("command", "Command text, for example status or task list", true))
+            .Build();
+    }
+
+    private static SlashCommandProperties BuildGuided()
     {
         return new SlashCommandBuilder()
             .WithName(Name)

@@ -239,7 +239,9 @@ public enum AuditEventType
     RestartCompleted,
     RestartRejected,
     AgentSnapshotReceived,
-    MediaCommand
+    MediaCommand,
+    DiscordCommandReceived,
+    DiscordCommandCompleted
 }
 
 public sealed record SetupStatus(
