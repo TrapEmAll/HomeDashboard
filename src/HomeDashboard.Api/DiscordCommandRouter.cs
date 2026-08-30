@@ -2,7 +2,7 @@ using HomeDashboard.Contracts;
 
 namespace HomeDashboard.Api;
 
-internal sealed class DiscordCommandRouter(
+public sealed class DiscordCommandRouter(
     DiscordCommandProcessor processor,
     IRestartCoordinator restarts,
     IServiceStatusProvider services,
@@ -11,7 +11,7 @@ internal sealed class DiscordCommandRouter(
     IOperationsService operations,
     ICommandCenterService commandCenter)
 {
-    public async Task<CommandCenterActionResult> ExecuteAsync(string command, string actor, CancellationToken cancellationToken)
+    public async Task<CommandCenterActionResult> ExecuteAsync(string command, string actor, ulong? discordUserId, CancellationToken cancellationToken)
     {
         var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length == 0) return Fail("Missing command details.");
@@ -19,6 +19,8 @@ internal sealed class DiscordCommandRouter(
 
         try
         {
+            var authorization = await AuthorizeAsync(command, discordUserId, cancellationToken);
+            if (authorization is not null) return authorization;
             if (tokens is ["restart", "service", ..])
                 return await RestartServiceAsync(command["restart service".Length..].Trim(), actor, cancellationToken);
             if (tokens is ["backup", "now"])
@@ -40,6 +42,20 @@ internal sealed class DiscordCommandRouter(
         {
             return Fail(ex.Message);
         }
+    }
+
+    public async Task<CommandCenterActionResult?> AuthorizeAsync(string command, ulong? discordUserId, CancellationToken cancellationToken)
+    {
+        var configuration = commandCenter.GetDiscordConfiguration();
+        if (configuration is null || discordUserId is null || !configuration.ProfileMappings.TryGetValue(discordUserId.Value, out var profileId))
+            return new CommandCenterActionResult(false, "Not authorized for HomeDashboard commands.");
+
+        var profile = (await commandCenter.GetSnapshotAsync(cancellationToken)).Profiles
+            .FirstOrDefault(item => item.Active && item.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
+        if (profile is null) return new CommandCenterActionResult(false, "Not authorized for HomeDashboard commands.");
+        if (RequiresAdministrator(command) && !profile.Role.Equals("Administrator", StringComparison.OrdinalIgnoreCase))
+            return new CommandCenterActionResult(false, "Administrator access is required for this command.");
+        return null;
     }
 
     private async Task<CommandCenterActionResult> RestartServiceAsync(string query, string actor, CancellationToken cancellationToken)
@@ -114,5 +130,14 @@ internal sealed class DiscordCommandRouter(
 
     private static CommandCenterActionResult Fail(string message) => new(false, $"{message}\n{Help()}");
 
+    private static bool RequiresAdministrator(string command)
+    {
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 2 && (parts[0].Equals("machine", StringComparison.OrdinalIgnoreCase)
+            || (parts[0].Equals("restart", StringComparison.OrdinalIgnoreCase)
+                && parts[1].Equals("service", StringComparison.OrdinalIgnoreCase)));
+    }
+
     private static string Help() => "Supported commands: restart service <name>, backup now, restore <id>, maintenance <task>, machine <lock|sleep|restart|shutdown> <agentId>, status, health.";
 }
+
