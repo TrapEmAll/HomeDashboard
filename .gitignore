@@ -9,6 +9,7 @@ node_modules/
 dist/
 outputs/
 backups/
+data/
 src/HomeDashboard.Api/wwwroot/
 .env
 .env.*

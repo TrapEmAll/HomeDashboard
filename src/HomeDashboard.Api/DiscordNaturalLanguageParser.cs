@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace HomeDashboard.Api;
@@ -100,7 +102,8 @@ internal static class DiscordNaturalLanguageParser
         {
             var fullPath = Path.GetFullPath(path, AppContext.BaseDirectory);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-            File.AppendAllText(fullPath, $"{DateTimeOffset.UtcNow:O}\t{input}{Environment.NewLine}");
+            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)))[..16];
+            File.AppendAllText(fullPath, $"{DateTimeOffset.UtcNow:O}\tlength={input.Length}\tfingerprint={fingerprint}{Environment.NewLine}");
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }

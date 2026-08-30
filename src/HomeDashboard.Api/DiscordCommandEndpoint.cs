@@ -18,7 +18,7 @@ internal static class DiscordCommandEndpoint
         auditStore.AddAuditEvent(new AuditEvent(
             auditId,
             AuditEventType.DiscordCommandReceived,
-            $"Discord command received from {actor}: {Short(command, 120)}",
+            $"Discord command received from {actor}.",
             null,
             null,
             actor,
@@ -59,10 +59,5 @@ internal static class DiscordCommandEndpoint
             auditId,
             result.Succeeded));
 
-    private static string Short(string value, int length)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return "(empty)";
-        return value.Length <= length ? value : value[..(length - 3)] + "...";
-    }
 }
 
