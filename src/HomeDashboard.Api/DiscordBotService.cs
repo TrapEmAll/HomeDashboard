@@ -334,7 +334,11 @@ public sealed class DiscordBotService(
             if (notify) await message.Channel.SendMessageAsync("Slow down. Please wait before sending more HomeDashboard commands.", allowedMentions: AllowedMentions.None);
             return;
         }
-        if (!IsAuthorized(message, configuration)) return;
+        if (!IsAuthorized(message, configuration))
+        {
+            await message.Channel.SendMessageAsync("This HomeDashboard command is not available to your Discord account or channel.", allowedMentions: AllowedMentions.None);
+            return;
+        }
         var now = DateTimeOffset.UtcNow;
         if (lastCommands.TryGetValue(message.Author.Id, out var lastCommand) && now - lastCommand < TimeSpan.FromSeconds(2)) return;
         lastCommands[message.Author.Id] = now;
@@ -784,7 +788,9 @@ public sealed class DiscordBotService(
     {
         var value = string.Join('|', configuration.Token, configuration.Prefix,
             string.Join(',', configuration.AllowedUserIds.Order()), string.Join(',', configuration.AllowedChannelIds.Order()),
-            string.Join(',', configuration.AllowedGuildIds.Order()), configuration.BriefingChannelId, configuration.BriefingTime);
+            string.Join(',', configuration.AllowedGuildIds.Order()),
+            string.Join(',', configuration.ProfileMappings.OrderBy(item => item.Key).Select(item => $"{item.Key}:{item.Value}")),
+            configuration.BriefingChannelId, configuration.BriefingTime);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
