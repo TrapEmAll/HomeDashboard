@@ -46,6 +46,9 @@ public sealed class DiscordCommandRouter(
                     return homeResult;
             }
 
+            if (await TryPersonalCommandAsync(parts, tokens, actor, cancellationToken) is { } personalResult)
+                return personalResult;
+
             var message = await processor.ProcessAsync(command, actor, cancellationToken);
             var succeeded = !message.StartsWith("Unknown command.", StringComparison.OrdinalIgnoreCase);
             return new CommandCenterActionResult(succeeded, succeeded ? message : Help());
@@ -236,6 +239,59 @@ public sealed class DiscordCommandRouter(
         "switches" => "switch",
         _ => value.ToLowerInvariant()
     };
+
+    private async Task<CommandCenterActionResult?> TryPersonalCommandAsync(
+        string[] parts,
+        string[] tokens,
+        string actor,
+        CancellationToken cancellationToken)
+    {
+        if (tokens[0] == "request")
+            return await ProcessPersonalAsync($"media add {string.Join(' ', parts.Skip(1))}", actor, cancellationToken);
+        if (tokens[0] == "missing")
+            return await MediaSummaryAsync(true, cancellationToken);
+        if (tokens[0] == "queue")
+            return await MediaSummaryAsync(false, cancellationToken);
+        if (tokens[0] == "add" && parts.Length >= 3 && IsItemKind(tokens[1]))
+            return await ProcessPersonalAsync($"{tokens[1]} add {string.Join(' ', parts.Skip(2))}", actor, cancellationToken);
+        if (tokens[0] == "list" && parts.Length >= 2 && IsItemKind(tokens[1]))
+            return await ProcessPersonalAsync($"{tokens[1]} list", actor, cancellationToken);
+        if (tokens[0] == "done" && parts.Length >= 2)
+            return await ProcessPersonalAsync($"task done {string.Join(' ', parts.Skip(1))}", actor, cancellationToken);
+        if (tokens[0] == "remove" && parts.Length >= 3 && IsItemKind(tokens[1]))
+            return await ProcessPersonalAsync($"{tokens[1]} remove {string.Join(' ', parts.Skip(2))}", actor, cancellationToken);
+        return null;
+    }
+
+    private async Task<CommandCenterActionResult> ProcessPersonalAsync(string command, string actor, CancellationToken cancellationToken)
+    {
+        var message = await processor.ProcessAsync(command, actor, cancellationToken);
+        return new CommandCenterActionResult(!message.StartsWith("Unknown command.", StringComparison.OrdinalIgnoreCase), message);
+    }
+
+    private async Task<CommandCenterActionResult> MediaSummaryAsync(bool missing, CancellationToken cancellationToken)
+    {
+        var snapshot = await operations.GetSnapshotAsync(cancellationToken);
+        if (missing)
+        {
+            var items = snapshot.Arr.Instances.Where(item => item.MissingCount > 0)
+                .Select(item => $"- {item.Name}: {item.MissingCount} missing").ToArray();
+            var total = snapshot.Arr.Instances.Sum(item => item.MissingCount);
+            return new CommandCenterActionResult(true, items.Length == 0
+                ? "Missing media: none reported."
+                : $"Missing media: {total} total.\n{string.Join("\n", items)}");
+        }
+
+        var queue = snapshot.Arr.Queue.Take(10).Select(item => $"- {item.Title} ({item.Source}, {item.ProgressPercent:0}%)").ToArray();
+        var more = Math.Max(0, snapshot.Arr.Queue.Count - queue.Length);
+        return new CommandCenterActionResult(true, queue.Length == 0
+            ? "Download queue: empty."
+            : $"Download queue: {snapshot.Arr.Queue.Count} item{(snapshot.Arr.Queue.Count == 1 ? "" : "s")}.\n{string.Join("\n", queue)}{(more > 0 ? $"\n+{more} more." : "")}");
+    }
+
+    private static bool IsItemKind(string value) => value.ToLowerInvariant() is
+        "task" or "tasks" or "note" or "notes" or "shopping" or "shop" or "calendar" or "agenda" or
+        "package" or "delivery" or "media" or "automation";
 
     private static string FitDiscordMessage(IEnumerable<string> sections)
     {

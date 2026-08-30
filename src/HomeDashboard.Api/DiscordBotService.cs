@@ -1235,7 +1235,9 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         };
         var values = lines.ToArray();
         var title = kind.Contains('.') ? kind.Split('.')[0] : kind;
-        return values.Length == 0 ? $"No {title} items to show." : $"**{char.ToUpperInvariant(title[0]) + title[1..]}**\n{string.Join("\n", values)}";
+        var visible = values.Take(10).ToArray();
+        var more = values.Length - visible.Length;
+        return values.Length == 0 ? $"No {title} items to show." : $"**{char.ToUpperInvariant(title[0]) + title[1..]}**\n{string.Join("\n", visible)}{(more > 0 ? $"\n+{more} more." : "")}";
     }
 
     private CommandCenterSearchResult? Resolve(string kind, string query)

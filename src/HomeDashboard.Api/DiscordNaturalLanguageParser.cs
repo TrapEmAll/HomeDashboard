@@ -57,7 +57,8 @@ internal static class DiscordNaturalLanguageParser
             return Result($"home control {text}", "home", text.Length > first.Length ? text[(first.Length + 1)..] : null);
         if (first is "status" or "health" or "help" or "brief" or "attention" or "search" or "ask")
             return Result(text, first, text.Length > first.Length ? text[(first.Length + 1)..] : null);
-        if (first is "task" or "tasks" or "shopping" or "shop" or "agenda" or "calendar" or "note" or "notes"
+        if (first is "add" or "list" or "done" or "remove" or "missing" or "queue"
+            or "task" or "tasks" or "shopping" or "shop" or "agenda" or "calendar" or "note" or "notes"
             or "package" or "delivery" or "media" or "request" or "inbox" or "alert" or "notify" or "notification"
             or "reminder" or "automation" or "automations" or "assistant" or "device" or "devices" or "home" or "mode"
             or "system" or "integration" or "integrations" or "asset" or "assets" or "activity")
