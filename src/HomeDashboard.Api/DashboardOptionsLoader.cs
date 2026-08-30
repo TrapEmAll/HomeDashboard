@@ -33,6 +33,7 @@ public static class DashboardOptionsLoader
             NetworkProbeTarget = string.IsNullOrWhiteSpace(section["NetworkProbeTarget"]) ? null : section["NetworkProbeTarget"]!.Trim(),
             NetworkProbeIntervalSeconds = ReadPositiveInt(section, "NetworkProbeIntervalSeconds", 30),
             HostDetailRefreshSeconds = ReadPositiveInt(section, "HostDetailRefreshSeconds", 60),
+            DiscordConfirmationTimeoutSeconds = ReadPositiveInt(section, "DiscordConfirmationTimeoutSeconds", 60),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds
@@ -113,3 +114,4 @@ public static class DashboardOptionsLoader
     private static int ReadPositiveInt(IConfiguration section, string key, int fallback)
         => int.TryParse(section[key], out var value) && value > 0 ? value : fallback;
 }
+

@@ -14,7 +14,8 @@ public sealed record AgentSnapshot(
     string AgentId,
     DateTimeOffset CapturedAt,
     SystemStats System,
-    IReadOnlyList<ServiceCard> Services);
+    IReadOnlyList<ServiceCard> Services,
+    bool MachineActionsEnabled = false);
 
 public sealed record AgentSummary(
     string AgentId,
@@ -526,3 +527,4 @@ public sealed record DashboardBackup(
     IReadOnlyList<MaintenanceWindow> Maintenance,
     string ApplicationVersion,
     CommandCenterArchive? CommandCenter = null);
+

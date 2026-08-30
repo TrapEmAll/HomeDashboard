@@ -13,6 +13,7 @@ public sealed class DashboardOptions
     public string? NetworkProbeTarget { get; init; }
     public int NetworkProbeIntervalSeconds { get; init; } = 30;
     public int HostDetailRefreshSeconds { get; init; } = 60;
+    public int DiscordConfirmationTimeoutSeconds { get; init; } = 60;
 }
 
 public sealed class ServiceDefinition
@@ -35,3 +36,4 @@ public sealed class NewsFeedDefinition
     public string Category { get; init; } = "Technology";
     public Uri? ProviderUrl { get; init; }
 }
+

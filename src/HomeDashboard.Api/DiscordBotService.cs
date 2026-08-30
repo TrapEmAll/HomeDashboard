@@ -11,12 +11,16 @@ namespace HomeDashboard.Api;
 
 public sealed class DiscordBotService(
     ICommandCenterService commandCenter,
+    IAgentSnapshotStore agentSnapshots,
+    IAgentCommandStore auditStore,
     DiscordCommandProcessor processor,
     IHttpClientFactory clients,
     IOptions<DashboardSecurityOptions> security,
+    IOptions<DashboardOptions> dashboardOptions,
     ILogger<DiscordBotService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<ulong, DateTimeOffset> lastCommands = new();
+    private readonly ConcurrentDictionary<string, PendingConfirmation> confirmations = new();
     private DiscordSocketClient? client;
     private DiscordBotConfiguration? activeConfiguration;
     private string? activeFingerprint;
@@ -76,6 +80,7 @@ public sealed class DiscordBotService(
         });
         socket.MessageReceived += HandleMessageAsync;
         socket.SlashCommandExecuted += HandleSlashCommandAsync;
+        socket.ButtonExecuted += HandleButtonAsync;
         socket.AutocompleteExecuted += HandleAutocompleteAsync;
         socket.SelectMenuExecuted += HandleSelectMenuAsync;
         socket.Ready += HandleReadyAsync;
@@ -99,6 +104,7 @@ public sealed class DiscordBotService(
         if (socket is null) return;
         socket.MessageReceived -= HandleMessageAsync;
         socket.SlashCommandExecuted -= HandleSlashCommandAsync;
+        socket.ButtonExecuted -= HandleButtonAsync;
         socket.AutocompleteExecuted -= HandleAutocompleteAsync;
         socket.SelectMenuExecuted -= HandleSelectMenuAsync;
         socket.Ready -= HandleReadyAsync;
@@ -178,7 +184,12 @@ public sealed class DiscordBotService(
 
         try
         {
-            var result = await PostCommandAsync(command, message.Author.Username, CancellationToken.None);
+            var result = await ExecuteDiscordCommandAsync(command, message.Author.Username, message.Author.Id,
+                async confirmationId =>
+                {
+                    await message.Channel.SendMessageAsync(BuildConfirmation(command, confirmationId, out var components), components: components,
+                        allowedMentions: AllowedMentions.None);
+                }, CancellationToken.None);
             var response = FormatResult(result);
             if (configuration.Prefix != "!hd") response = response.Replace("!hd", configuration.Prefix, StringComparison.Ordinal);
             if (result.Message.StartsWith(DiscordCommandProcessor.AmbiguousMediaMessage, StringComparison.Ordinal)
@@ -223,7 +234,15 @@ public sealed class DiscordBotService(
         {
             await interaction.DeferAsync(ephemeral: true);
             var response = interaction.Data.Name == DiscordSlashCommandCatalog.IntakeName
-                ? FormatResult(await PostCommandAsync(ReadIntakeCommand(interaction.Data.Options), interaction.User.Username, CancellationToken.None))
+                ? FormatResult(await ExecuteDiscordCommandAsync(ReadIntakeCommand(interaction.Data.Options), interaction.User.Username, interaction.User.Id,
+                    async confirmationId =>
+                    {
+                        await interaction.ModifyOriginalResponseAsync(message =>
+                        {
+                            message.Content = BuildConfirmation(ReadIntakeCommand(interaction.Data.Options), confirmationId, out var components);
+                            message.Components = components;
+                        });
+                    }, CancellationToken.None))
                 : await ProcessGuidedSlashCommandAsync(interaction, CancellationToken.None);
             await interaction.ModifyOriginalResponseAsync(message => message.Content = LimitMessage(response));
         }
@@ -302,7 +321,119 @@ public sealed class DiscordBotService(
     {
         var (area, action, options) = ReadSlashCommand(interaction.Data.Options);
         var command = DiscordCommandProcessor.ToCommandText(area, action, options);
-        return FormatResult(await PostCommandAsync(command, interaction.User.Username, cancellationToken));
+        return FormatResult(await ExecuteDiscordCommandAsync(command, interaction.User.Username, interaction.User.Id,
+            async confirmationId =>
+            {
+                await interaction.ModifyOriginalResponseAsync(message =>
+                {
+                    message.Content = BuildConfirmation(command, confirmationId, out var components);
+                    message.Components = components;
+                });
+            }, cancellationToken));
+    }
+
+    private async Task<CommandCenterActionResult> ExecuteDiscordCommandAsync(
+        string command,
+        string actor,
+        ulong userId,
+        Func<string, Task> publishConfirmation,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadMachineCommand(command, out var agentId))
+            return await PostCommandAsync(command, actor, cancellationToken);
+
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        if (snapshot.Profiles.All(profile => !profile.Active || !profile.Role.Equals("Administrator", StringComparison.OrdinalIgnoreCase)))
+            return RejectMachine(command, "Machine actions require an active Administrator profile.", actor);
+
+        var agent = agentSnapshots.GetLatest(agentId);
+        if (agent is null || !agent.MachineActionsEnabled)
+            return RejectMachine(command, $"Machine actions are disabled or unavailable for agent {agentId}.", actor);
+
+        var id = Guid.NewGuid().ToString("n");
+        var pending = new PendingConfirmation(id, userId, actor, command);
+        confirmations[id] = pending;
+        try
+        {
+            await publishConfirmation(id);
+            return await pending.Completion.Task.WaitAsync(
+                TimeSpan.FromSeconds(Math.Max(1, dashboardOptions.Value.DiscordConfirmationTimeoutSeconds)), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            return RejectMachine(command, "Machine action confirmation timed out.", pending.Actor);
+        }
+        finally
+        {
+            confirmations.TryRemove(id, out _);
+        }
+    }
+
+    private async Task HandleButtonAsync(SocketMessageComponent interaction)
+    {
+        if (!interaction.Data.CustomId.StartsWith("hd:machine:", StringComparison.Ordinal)) return;
+        var id = interaction.Data.CustomId["hd:machine:".Length..];
+        if (!confirmations.TryRemove(id, out var pending) || pending.UserId != interaction.User.Id)
+        {
+            await interaction.RespondAsync("This confirmation is no longer available.", ephemeral: true);
+            return;
+        }
+
+        var confirmed = interaction.Data.CustomId.EndsWith(":yes", StringComparison.Ordinal);
+        await interaction.UpdateAsync(message =>
+        {
+            message.Content = "Processing HomeDashboard command...";
+            message.Components = new ComponentBuilder().Build();
+        });
+
+        if (!confirmed)
+        {
+            var result = RejectMachine(pending.Command, "Machine action rejected.", pending.Actor);
+            pending.Completion.TrySetResult(result);
+            return;
+        }
+
+        try
+        {
+            var confirmedResult = await PostCommandAsync(pending.Command, pending.Actor, CancellationToken.None);
+            pending.Completion.TrySetResult(confirmedResult);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Confirmed Discord machine command failed for user {UserId}", interaction.User.Id);
+            pending.Completion.TrySetResult(new CommandCenterActionResult(false, "The confirmed machine action could not be completed."));
+        }
+    }
+
+    private static string BuildConfirmation(string command, string confirmationId, out MessageComponent components)
+    {
+        var builder = new ComponentBuilder()
+            .WithButton("Confirm", $"hd:machine:{confirmationId}:yes", ButtonStyle.Success)
+            .WithButton("Reject", $"hd:machine:{confirmationId}:no", ButtonStyle.Danger);
+        components = builder.Build();
+        return $"Confirm machine action: `{command}`\nThis will run after you select Confirm.";
+    }
+
+    private CommandCenterActionResult RejectMachine(string command, string message, string actor)
+    {
+        var result = new CommandCenterActionResult(false, message);
+        auditStore.AddAuditEvent(new AuditEvent(Guid.NewGuid().ToString("n"), AuditEventType.RestartRejected,
+            message, null, TryReadMachineCommand(command, out var agentId) ? agentId : null, actor, DateTimeOffset.UtcNow, null, false));
+        return result;
+    }
+
+    private static bool TryReadMachineCommand(string command, out string agentId)
+    {
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        agentId = parts.Length >= 3 && parts[0].Equals("machine", StringComparison.OrdinalIgnoreCase)
+            && parts[1] is "lock" or "sleep" or "restart" or "shutdown" ? parts[2] : "";
+        return agentId.Length > 0;
+    }
+
+    private sealed record PendingConfirmation(string Id, ulong UserId, string Actor, string Command)
+    {
+        public TaskCompletionSource<CommandCenterActionResult> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private async Task<CommandCenterActionResult> PostCommandAsync(string command, string actor, CancellationToken cancellationToken)
@@ -1076,3 +1207,4 @@ public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter,
         + "`!hd mode set Away` · `!hd search query` · `!hd integrations list`\n"
         + "`!hd assets list` · `!hd profiles list` · `!hd activity list` · `!hd system logs` · `!hd status`";
 }
+

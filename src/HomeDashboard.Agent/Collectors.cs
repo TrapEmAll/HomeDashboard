@@ -20,7 +20,7 @@ public sealed class AgentCollector(
     IWindowsServiceSnapshotCollector serviceCollector) : IAgentCollector
 {
     public AgentSnapshot Collect()
-        => new(options.CurrentValue.AgentId, DateTimeOffset.UtcNow, systemCollector.Collect(), serviceCollector.Collect());
+        => new(options.CurrentValue.AgentId, DateTimeOffset.UtcNow, systemCollector.Collect(), serviceCollector.Collect(), options.CurrentValue.MachineActionsEnabled);
 }
 
 public interface ISystemSnapshotCollector
@@ -323,3 +323,4 @@ public sealed class WindowsServiceSnapshotCollector(IOptionsMonitor<AgentOptions
             _ => ServiceStatus.Unknown
         };
 }
+
