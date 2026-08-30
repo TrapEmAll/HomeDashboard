@@ -219,7 +219,7 @@ public sealed record CommandCenterActionResult(
     bool RequiresConfirmation = false,
     string? AuditId = null);
 
-public sealed record DiscordCommandRequest(string Command, string Actor);
+public sealed record DiscordCommandRequest(string Command, string Actor, ulong? DiscordUserId = null);
 
 public sealed record CommandCenterBatchRequest(
     IReadOnlyList<CommandCenterActionRequest>? Actions = null,
@@ -265,3 +265,4 @@ public sealed record SystemLogEntry(
     string Level,
     string Source,
     string Message);
+
