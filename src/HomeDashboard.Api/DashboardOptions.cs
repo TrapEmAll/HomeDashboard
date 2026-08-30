@@ -15,6 +15,8 @@ public sealed class DashboardOptions
     public int HostDetailRefreshSeconds { get; init; } = 60;
     public int DiscordConfirmationTimeoutSeconds { get; init; } = 60;
     public string DiscordUnmatchedLogPath { get; init; } = "data/discord-unmatched.log";
+    public int DiscordRateLimitCommands { get; init; } = 10;
+    public int DiscordRateLimitWindowSeconds { get; init; } = 60;
 }
 
 public sealed class ServiceDefinition
