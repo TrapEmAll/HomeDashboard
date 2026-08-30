@@ -36,6 +36,10 @@ public sealed class DiscordCommandRouter(
                 return await QueueMachineAsync(parts, actor, cancellationToken);
             if (tokens[0] is "status" or "health")
                 return await StatusAsync(cancellationToken);
+            if (tokens[0] == "mode" && tokens.ElementAtOrDefault(1) == "status")
+                return await ModeStatusAsync(discordUserId, cancellationToken);
+            if (tokens[0] == "mode")
+                return await SetModeAsync(command["mode".Length..].Trim(), cancellationToken);
             if (tokens[0] is "search" or "find")
                 return SearchCommand(command[(command.IndexOf(' ') + 1)..].Trim());
             if (tokens is ["list", "rules"])
@@ -220,6 +224,24 @@ public sealed class DiscordCommandRouter(
         if (rules.Count == 0) return new CommandCenterActionResult(true, "No automation rules are configured.");
         var lines = rules.Select(rule => $"- **{rule.Name}** · {rule.Trigger} · {(rule.Enabled ? "enabled" : "disabled")}");
         return new CommandCenterActionResult(true, FitDiscordMessage(["**Automation rules**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> ModeStatusAsync(ulong? discordUserId, CancellationToken cancellationToken)
+    {
+        var configuration = commandCenter.GetDiscordConfiguration();
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        var profileId = discordUserId is not null && configuration is not null
+            ? configuration.ProfileMappings.GetValueOrDefault(discordUserId.Value)
+            : null;
+        var profile = profileId is null ? null : snapshot.Profiles.FirstOrDefault(item => item.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
+        return new CommandCenterActionResult(true,
+            $"Mode: **{snapshot.ActiveMode}**\nProfile: {(profile is null ? "not found" : $"{profile.DisplayName} ({profile.Role})")}.");
+    }
+
+    private async Task<CommandCenterActionResult> SetModeAsync(string mode, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(mode)) return Fail("Provide a mode name.");
+        return await commandCenter.ExecuteAsync(new CommandCenterActionRequest("mode.set", mode, true), cancellationToken);
     }
 
     private CommandCenterActionResult SearchCommand(string query)
