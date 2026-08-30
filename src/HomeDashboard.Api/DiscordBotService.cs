@@ -29,6 +29,7 @@ public sealed class DiscordBotService(
     private DiscordBotConfiguration? activeConfiguration;
     private string? activeFingerprint;
     private string? registeredCommandFingerprint;
+    private DateOnly? lastBriefingDate;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -54,6 +55,10 @@ public sealed class DiscordBotService(
                         await DisconnectAsync();
                         await ConnectAsync(configuration, fingerprint!, stoppingToken);
                     }
+                    else
+                    {
+                        await PostScheduledBriefingAsync(configuration, stoppingToken);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -72,6 +77,17 @@ public sealed class DiscordBotService(
     {
         await DisconnectAsync();
         await base.StopAsync(cancellationToken);
+    }
+
+    private async Task PostScheduledBriefingAsync(DiscordBotConfiguration configuration, CancellationToken cancellationToken)
+    {
+        if (configuration.BriefingChannelId == 0 || DateTime.Now.TimeOfDay < configuration.BriefingTime.ToTimeSpan()) return;
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        if (lastBriefingDate == today) return;
+        if (client?.GetChannel(configuration.BriefingChannelId) is not IMessageChannel channel) return;
+
+        await channel.SendMessageAsync(LimitMessage(await processor.GetBriefingAsync(cancellationToken)), allowedMentions: AllowedMentions.None);
+        lastBriefingDate = today;
     }
 
     private async Task ConnectAsync(DiscordBotConfiguration configuration, string fingerprint, CancellationToken cancellationToken)
@@ -612,7 +628,7 @@ public sealed class DiscordBotService(
     {
         var value = string.Join('|', configuration.Token, configuration.Prefix,
             string.Join(',', configuration.AllowedUserIds.Order()), string.Join(',', configuration.AllowedChannelIds.Order()),
-            string.Join(',', configuration.AllowedGuildIds.Order()));
+            string.Join(',', configuration.AllowedGuildIds.Order()), configuration.BriefingChannelId, configuration.BriefingTime);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
@@ -660,6 +676,8 @@ public sealed record DiscordCommandChoice(string Id, string Title, string? Subti
 public sealed class DiscordCommandProcessor(ICommandCenterService commandCenter, IArrMediaRequestService? arrMedia = null)
 {
     public const string AmbiguousMediaMessage = "Several releases match that text.";
+
+    public Task<string> GetBriefingAsync(CancellationToken cancellationToken) => BriefingAsync(cancellationToken);
 
     public static string ToCommandText(string area, string action, IReadOnlyDictionary<string, string> options)
     {

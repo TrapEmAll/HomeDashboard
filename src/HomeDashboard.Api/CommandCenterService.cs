@@ -37,7 +37,9 @@ public sealed record DiscordBotConfiguration(
     IReadOnlySet<ulong> AllowedUserIds,
     IReadOnlySet<ulong> AllowedChannelIds,
     IReadOnlySet<ulong> AllowedGuildIds,
-    IReadOnlyDictionary<ulong, string> ProfileMappings);
+    IReadOnlyDictionary<ulong, string> ProfileMappings,
+    ulong BriefingChannelId,
+    TimeOnly BriefingTime);
 
 public sealed class CommandCenterService : ICommandCenterService
 {
@@ -472,7 +474,9 @@ public sealed class CommandCenterService : ICommandCenterService
                 ParseIds(integration.Settings.GetValueOrDefault("allowedUserIds")),
                 ParseIds(integration.Settings.GetValueOrDefault("allowedChannelIds")),
                 ParseIds(integration.Settings.GetValueOrDefault("allowedGuildIds")),
-                ParseProfileMappings(integration.Settings.GetValueOrDefault("profileMappings")));
+                ParseProfileMappings(integration.Settings.GetValueOrDefault("profileMappings")),
+                ulong.TryParse(integration.Settings.GetValueOrDefault("briefingChannelId"), out var briefingChannelId) ? briefingChannelId : 0,
+                TimeOnly.TryParse(integration.Settings.GetValueOrDefault("briefingTime"), out var briefingTime) ? briefingTime : new TimeOnly(8, 0));
         }
     }
 
