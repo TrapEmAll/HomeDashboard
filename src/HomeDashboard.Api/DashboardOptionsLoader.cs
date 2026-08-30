@@ -35,6 +35,8 @@ public static class DashboardOptionsLoader
             HostDetailRefreshSeconds = ReadPositiveInt(section, "HostDetailRefreshSeconds", 60),
             DiscordConfirmationTimeoutSeconds = ReadPositiveInt(section, "DiscordConfirmationTimeoutSeconds", 60),
             DiscordUnmatchedLogPath = ReadString(section, "DiscordUnmatchedLogPath", "data/discord-unmatched.log"),
+            DiscordRateLimitCommands = ReadPositiveInt(section, "DiscordRateLimitCommands", 10),
+            DiscordRateLimitWindowSeconds = ReadPositiveInt(section, "DiscordRateLimitWindowSeconds", 60),
             IncludeRecommendedFeeds = ReadBool(section, "IncludeRecommendedFeeds", true),
             Services = services,
             NewsFeeds = feeds
