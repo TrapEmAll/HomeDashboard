@@ -53,6 +53,8 @@ internal static class DiscordNaturalLanguageParser
     private static DiscordParseResult? ParseDirect(string text)
     {
         var first = text.Split(' ', 2)[0].ToLowerInvariant();
+        if (first is "light" or "lights" or "lamp" or "lamps" or "thermostat" or "thermostats" or "temperature" or "climate" or "fan" or "fans" or "switch" or "switches")
+            return Result($"home control {text}", "home", text.Length > first.Length ? text[(first.Length + 1)..] : null);
         if (first is "status" or "health" or "help" or "brief" or "attention" or "search" or "ask")
             return Result(text, first, text.Length > first.Length ? text[(first.Length + 1)..] : null);
         if (first is "task" or "tasks" or "shopping" or "shop" or "agenda" or "calendar" or "note" or "notes"

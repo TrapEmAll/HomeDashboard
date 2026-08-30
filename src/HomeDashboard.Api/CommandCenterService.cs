@@ -645,7 +645,10 @@ public sealed class CommandCenterService : ICommandCenterService
         var service = action.Arguments?.GetValueOrDefault("service") ?? "toggle";
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(EnsureSlash(integration.BaseUrl)), $"api/services/{Uri.EscapeDataString(domain)}/{Uri.EscapeDataString(service)}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", integration.Secret);
-        request.Content = JsonContent.Create(new { entity_id = action.Target });
+        var payload = new Dictionary<string, object?> { ["entity_id"] = action.Target };
+        if (action.Arguments?.GetValueOrDefault("temperature") is { } temperature && int.TryParse(temperature, out var value))
+            payload["temperature"] = value;
+        request.Content = JsonContent.Create(payload);
         using var response = await clients.CreateClient("command-center").SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode ? new(true, $"Home Assistant accepted {domain}.{service}.") : new(false, $"Home Assistant returned {(int)response.StatusCode}.");
     }

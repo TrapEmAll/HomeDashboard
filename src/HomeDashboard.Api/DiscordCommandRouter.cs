@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using HomeDashboard.Contracts;
 
 namespace HomeDashboard.Api;
@@ -35,6 +36,15 @@ public sealed class DiscordCommandRouter(
                 return await QueueMachineAsync(parts, actor, cancellationToken);
             if (tokens[0] is "status" or "health")
                 return await StatusAsync(cancellationToken);
+
+            if (tokens[0] == "home" || tokens[0] == "homeassistant")
+            {
+                var homeCommand = tokens[0] == "home" && tokens.ElementAtOrDefault(1) == "control"
+                    ? command[(command.IndexOf(' ') + 1)..].Trim()["control".Length..].Trim()
+                    : command;
+                if (await TryHomeControlAsync(homeCommand, cancellationToken) is { } homeResult)
+                    return homeResult;
+            }
 
             var message = await processor.ProcessAsync(command, actor, cancellationToken);
             var succeeded = !message.StartsWith("Unknown command.", StringComparison.OrdinalIgnoreCase);
@@ -160,6 +170,72 @@ public sealed class DiscordCommandRouter(
         return new CommandCenterActionResult(true,
             $"{online} online, {degraded} degraded, {offline} offline. {stats.Hostname}: CPU {stats.CpuPercent:0.#}%, memory {stats.MemoryUsedPercent:0.#}%.");
     }
+
+    private async Task<CommandCenterActionResult?> TryHomeControlAsync(string command, CancellationToken cancellationToken)
+    {
+        var text = command.Trim();
+        var match = Regex.Match(text, @"^(?<target>.+?)\s+(?<action>on|off|toggle)$", RegexOptions.IgnoreCase);
+        var temperature = Regex.Match(text, @"^(?<target>.+?)\s+(?<temperature>\d{2,3})$", RegexOptions.IgnoreCase);
+        var requestedAction = match.Success ? match.Groups["action"].Value.ToLowerInvariant() : null;
+        var target = match.Success ? match.Groups["target"].Value : temperature.Success ? temperature.Groups["target"].Value : text;
+        var snapshot = await commandCenter.GetSnapshotAsync(cancellationToken);
+        var entity = ResolveHomeEntity(snapshot.HomeEntities, target, temperature.Success);
+
+        if (entity is null)
+            return new CommandCenterActionResult(false, HomeSuggestion(snapshot.HomeEntities, target));
+
+        string service;
+        var arguments = new Dictionary<string, string> { ["domain"] = entity.Domain };
+        if (temperature.Success && entity.Domain.Equals("climate", StringComparison.OrdinalIgnoreCase))
+        {
+            service = "set_temperature";
+            arguments["temperature"] = temperature.Groups["temperature"].Value;
+        }
+        else if (requestedAction is "on" or "off" or "toggle")
+        {
+            service = requestedAction == "on" ? "turn_on" : requestedAction == "off" ? "turn_off" : "toggle";
+        }
+        else
+        {
+            return new CommandCenterActionResult(false, HomeSuggestion(snapshot.HomeEntities, target, entity));
+        }
+
+        arguments["service"] = service;
+        return await commandCenter.ExecuteAsync(new CommandCenterActionRequest(
+            "homeassistant.call", entity.Id, true, arguments), cancellationToken);
+    }
+
+    private static HomeEntity? ResolveHomeEntity(IReadOnlyList<HomeEntity> entities, string target, bool climateOnly)
+    {
+        var terms = target.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeHomeTerm)
+            .ToArray();
+        return entities
+            .Where(entity => !climateOnly || entity.Domain.Equals("climate", StringComparison.OrdinalIgnoreCase))
+            .Select(entity => new { Entity = entity, Text = $"{entity.Id} {entity.Name} {entity.Domain} {entity.Area}".ToLowerInvariant() })
+            .Where(item => terms.Length > 0 && terms.All(term => item.Text.Contains(term, StringComparison.OrdinalIgnoreCase)))
+            .Select(item => item.Entity)
+            .FirstOrDefault();
+    }
+
+    private static string HomeSuggestion(IReadOnlyList<HomeEntity> entities, string target, HomeEntity? entity = null)
+    {
+        if (entity is not null)
+            return $"Did you mean `{entity.Name} toggle`?";
+        var choices = entities.Take(5).Select(item => $"`{item.Name} {item.Area ?? item.Domain} toggle`").ToArray();
+        return choices.Length == 0
+            ? "Did you mean a configured Home Assistant device? No devices are currently available."
+            : $"Did you mean one of: {string.Join(", ", choices)}?";
+    }
+
+    private static string NormalizeHomeTerm(string value) => value.ToLowerInvariant() switch
+    {
+        "lights" or "lamps" => "light",
+        "thermostat" or "thermostats" or "temperature" => "climate",
+        "fans" => "fan",
+        "switches" => "switch",
+        _ => value.ToLowerInvariant()
+    };
 
     private static string FitDiscordMessage(IEnumerable<string> sections)
     {
