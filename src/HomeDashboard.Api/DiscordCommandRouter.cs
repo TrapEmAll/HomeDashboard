@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using HomeDashboard.Contracts;
+using Microsoft.Extensions.Options;
 
 namespace HomeDashboard.Api;
 
@@ -12,7 +13,9 @@ public sealed class DiscordCommandRouter(
     IOperationsService operations,
     ICommandCenterService commandCenter,
     IDashboardService? dashboard = null,
-    IAgentCommandStore? commandStore = null)
+    IAgentCommandStore? commandStore = null,
+    INewsProvider? news = null,
+    IOptions<DashboardOptions>? dashboardOptions = null)
 {
     public async Task<CommandCenterActionResult> ExecuteAsync(string command, string actor, ulong? discordUserId, CancellationToken cancellationToken)
     {
@@ -42,6 +45,8 @@ public sealed class DiscordCommandRouter(
                 return await SetModeAsync(command["mode".Length..].Trim(), cancellationToken);
             if (tokens[0] is "search" or "find")
                 return SearchCommand(command[(command.IndexOf(' ') + 1)..].Trim());
+            if (tokens[0] is "rss" or "feeds" or "unread" or "latest" or "subscribe" or "unsubscribe" or "mark")
+                return await RssCommandAsync(parts, cancellationToken);
             if (tokens is ["list", "rules"])
                 return await ListAutomationRulesAsync(cancellationToken);
             if (tokens.Length >= 3 && tokens[1] == "rule" && (tokens[0] is "run" or "enable" or "disable"))
@@ -373,6 +378,98 @@ public sealed class DiscordCommandRouter(
         return new CommandCenterActionResult(true, queue.Length == 0
             ? "Download queue: empty."
             : $"Download queue: {snapshot.Arr.Queue.Count} item{(snapshot.Arr.Queue.Count == 1 ? "" : "s")}.\n{string.Join("\n", queue)}{(more > 0 ? $"\n+{more} more." : "")}");
+    }
+
+    private async Task<CommandCenterActionResult> RssCommandAsync(string[] parts, CancellationToken cancellationToken)
+    {
+        if (news is null) return Fail("RSS is not available.");
+        var area = parts[0].ToLowerInvariant();
+        if (area == "feeds") return ListFeeds();
+        if (area == "subscribe") return await SubscribeFeedAsync(string.Join(' ', parts.Skip(1)), cancellationToken);
+        if (area == "unsubscribe") return await UnsubscribeFeedAsync(string.Join(' ', parts.Skip(1)), cancellationToken);
+        if (area == "mark" && parts.ElementAtOrDefault(1)?.Equals("read", StringComparison.OrdinalIgnoreCase) == true)
+            return new CommandCenterActionResult(false, "RSS read state is browser-local; no server read-state endpoint is available.");
+        if (area == "unread")
+            return new CommandCenterActionResult(false, "RSS unread state is browser-local; no server read-state endpoint is available.");
+        if (area == "latest") return await LatestFeedAsync(string.Join(' ', parts.Skip(1)), cancellationToken);
+        if (area == "rss") return await SearchRssAsync(string.Join(' ', parts.Skip(1)), cancellationToken);
+        return Fail("Unknown RSS command.");
+    }
+
+    private CommandCenterActionResult ListFeeds()
+    {
+        var feeds = EffectiveFeeds();
+        if (feeds.Count == 0) return new CommandCenterActionResult(true, "No RSS feeds are configured.");
+        var visible = feeds.Take(20).Select(feed => $"- **{feed.Name}** ({feed.Kind})").ToArray();
+        var more = feeds.Count - visible.Length;
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**RSS feeds**", string.Join("\n", visible) + (more > 0 ? $"\n+{more} more." : "")]));
+    }
+
+    private async Task<CommandCenterActionResult> LatestFeedAsync(string feed, CancellationToken cancellationToken)
+    {
+        var items = await news!.GetNewsAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(feed))
+            items = items.Where(item => item.Source.Equals(feed.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+        var latest = items.OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue).Take(5).ToArray();
+        if (latest.Length == 0) return new CommandCenterActionResult(true, "No RSS items matched that feed.");
+        var lines = latest.Select(item => $"- **{item.Title}**{(item.Url is null ? "" : $"\n  {item.Url}")}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Latest RSS items**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> SearchRssAsync(string query, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Fail("Provide an RSS search query.");
+        var needle = query.Trim();
+        var items = (await news!.GetNewsAsync(cancellationToken))
+            .Where(item => item.Title.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || item.Source.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || (item.Summary?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            .OrderByDescending(item => item.PublishedAt ?? DateTimeOffset.MinValue)
+            .Take(5)
+            .ToArray();
+        if (items.Length == 0) return new CommandCenterActionResult(true, $"No RSS items matched '{needle}'.");
+        var lines = items.Select(item => $"- **{item.Title}** ({item.Source}){(item.Url is null ? "" : $"\n  {item.Url}")}");
+        return new CommandCenterActionResult(true, FitDiscordMessage([$"**RSS results for `{needle}`**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> SubscribeFeedAsync(string value, CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            return Fail("Provide a valid RSS or Atom feed URL.");
+        var settings = commandCenterSettings();
+        if (settings.NewsFeeds.Any(feed => feed.Url.Equals(uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)))
+            return new CommandCenterActionResult(true, "That RSS feed is already subscribed.");
+        var feed = new NewsFeedSetting(uri.Host, uri.AbsoluteUri, NewsContentKind.Article, "Technology", null);
+        await UpdateFeedsAsync(settings.NewsFeeds.Append(feed), cancellationToken);
+        return new CommandCenterActionResult(true, $"Subscribed to **{feed.Name}**. Restart the API to refresh feeds.");
+    }
+
+    private async Task<CommandCenterActionResult> UnsubscribeFeedAsync(string value, CancellationToken cancellationToken)
+    {
+        var settings = commandCenterSettings();
+        var match = settings.NewsFeeds.FirstOrDefault(feed => feed.Name.Equals(value.Trim(), StringComparison.OrdinalIgnoreCase)
+            || feed.Url.Equals(value.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (match is null) return new CommandCenterActionResult(false, "No configured RSS feed matched that name or URL.");
+        await UpdateFeedsAsync(settings.NewsFeeds.Where(feed => !ReferenceEquals(feed, match)), cancellationToken);
+        return new CommandCenterActionResult(true, $"Unsubscribed from **{match.Name}**. Restart the API to apply the change.");
+    }
+
+    private IReadOnlyList<NewsFeedSetting> EffectiveFeeds()
+    {
+        var configured = commandCenterSettings().NewsFeeds;
+        if (dashboardOptions?.Value.IncludeRecommendedFeeds != true) return configured;
+        var recommended = RecommendedFeedCatalog.All.Select(feed => new NewsFeedSetting(feed.Name, feed.Url.AbsoluteUri, feed.Kind, feed.Category, feed.ProviderUrl?.AbsoluteUri));
+        return configured.Concat(recommended).GroupBy(feed => feed.Url, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
+    }
+
+    private DashboardSettings commandCenterSettings() => setup.GetSettings();
+
+    private async Task UpdateFeedsAsync(IEnumerable<NewsFeedSetting> feeds, CancellationToken cancellationToken)
+    {
+        var settings = commandCenterSettings();
+        await setup.UpdateSettingsAsync(new UpdateDashboardSettingsRequest(settings.DefaultAgentId, dashboardOptions?.Value.IncludeRecommendedFeeds == true,
+            settings.Services.Select(service => new UpdateServiceSetting(service.Id, service.Name, service.Kind, service.Description, service.Url, service.HealthUrl, null, false, service.RestartEnabled)).ToArray(),
+            feeds.ToArray()), cancellationToken);
     }
 
     private static bool IsItemKind(string value) => value.ToLowerInvariant() is
