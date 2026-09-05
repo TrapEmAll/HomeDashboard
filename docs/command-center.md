@@ -113,6 +113,16 @@ agents
 alerts
 commands
 downloads
+downloads pause <id or name>
+downloads resume <id or name>
+downloads recheck <id or name>
+downloads remove <id or name>
+arr health
+arr history
+arr calendar
+arr search-missing <service> confirm
+arr refresh <service>
+playback
 maintenance list
 maintenance remove <id or title>
 activity
