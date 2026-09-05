@@ -51,6 +51,18 @@ public sealed class DiscordCommandRouter(
                 return await ArrCommandAsync(parts, actor, cancellationToken);
             if (tokens[0] is "playback" or "playing" or "plex")
                 return await PlaybackAsync(cancellationToken);
+            if (tokens[0] is "system" or "stats" or "telemetry")
+                return SystemSummary();
+            if (tokens[0] is "network" or "net")
+                return NetworkSummary();
+            if (tokens[0] is "storage" or "disks" or "disk")
+                return StorageSummary();
+            if (tokens[0] is "uptime")
+                return UptimeSummary();
+            if (tokens[0] is "processes" or "top")
+                return ProcessSummary();
+            if (tokens[0] is "incidents" or "outages")
+                return await IncidentSummaryAsync(cancellationToken);
             if (tokens[0] is "activity" or "recent")
                 return await ActivityAsync(cancellationToken);
             if (tokens[0] is "status" or "health")
@@ -192,6 +204,23 @@ public sealed class DiscordCommandRouter(
 
     private async Task<CommandCenterActionResult> ServicesCommandAsync(string[] parts, CancellationToken cancellationToken)
     {
+        if (parts.ElementAtOrDefault(1)?.ToLowerInvariant() is "show" or "details" or "detail")
+        {
+            var query = string.Join(' ', parts.Skip(2));
+            if (string.IsNullOrWhiteSpace(query)) return Fail("Provide a service id or name.");
+            var service = (await services.GetServicesAsync(cancellationToken)).FirstOrDefault(item =>
+                item.Id.Equals(query, StringComparison.OrdinalIgnoreCase)
+                || item.Name.Equals(query, StringComparison.OrdinalIgnoreCase)
+                || item.Name.Contains(query, StringComparison.OrdinalIgnoreCase));
+            return service is null
+                ? Fail($"No service matched '{query}'.")
+                : new CommandCenterActionResult(true, FitDiscordMessage([
+                    $"**{service.Name}** · {service.Status}",
+                    service.Description,
+                    $"Last checked: {service.LastCheckedAt?.LocalDateTime.ToString("g") ?? "unknown"}",
+                    string.IsNullOrWhiteSpace(service.StatusMessage) ? "No status message reported." : service.StatusMessage,
+                    service.Metrics.Count == 0 ? "No service metrics reported." : string.Join("\n", service.Metrics.Select(item => $"- {item.Label}: {item.Value}"))]));
+        }
         var filter = parts.ElementAtOrDefault(1)?.ToLowerInvariant() switch
         {
             "offline" or "down" => ServiceStatus.Offline,
@@ -322,7 +351,7 @@ public sealed class DiscordCommandRouter(
                 ? "Media calendar: nothing upcoming."
                 : FitDiscordMessage(["**Media calendar**", string.Join("\n", calendar.Select(item => $"- **{item.Title}** · {item.AirsAt.LocalDateTime:g} · {item.Source}"))]));
         }
-        if (action is "search-missing" or "missing" or "refresh" or "refresh-downloads")
+        if (action is "search-missing" or "refresh" or "refresh-downloads")
         {
             var serviceId = string.Join(' ', parts.Skip(2)).Trim();
             if (string.IsNullOrWhiteSpace(serviceId)) return Fail("Provide the *arr service id or name.");
@@ -331,12 +360,105 @@ public sealed class DiscordCommandRouter(
                 || item.Name.Equals(serviceId, StringComparison.OrdinalIgnoreCase)
                 || item.Name.Contains(serviceId, StringComparison.OrdinalIgnoreCase));
             if (service is null) return Fail($"No configured *arr service matched '{serviceId}'.");
-            var command = action is "search-missing" or "missing" ? ArrCommandAction.SearchMissing : ArrCommandAction.RefreshMonitoredDownloads;
+            var command = action == "search-missing" ? ArrCommandAction.SearchMissing : ArrCommandAction.RefreshMonitoredDownloads;
             var confirmed = parts.Any(item => item.Equals("confirm", StringComparison.OrdinalIgnoreCase));
             var result = await operations.RunArrCommandAsync(new ArrCommandRequest(service.ServiceId, command, confirmed), actor, cancellationToken);
             return new CommandCenterActionResult(result.Succeeded, result.Message, result.RequiresConfirmation);
         }
+        if (action is "queue" or "downloads")
+        {
+            var queue = (await operations.GetSnapshotAsync(cancellationToken)).Arr.Queue.Take(20).ToArray();
+            return new CommandCenterActionResult(true, queue.Length == 0
+                ? "*arr queue: empty."
+                : FitDiscordMessage(["** *arr queue**", string.Join("\n", queue.Select(item => $"- **{item.Title}** · {item.Source} · {item.Status} · {item.ProgressPercent:0}%{Suffix(item.ErrorMessage)}"))]));
+        }
+        if (action is "missing" or "wanted")
+        {
+            var instances = (await operations.GetSnapshotAsync(cancellationToken)).Arr.Instances
+                .Where(item => item.MissingCount > 0).Take(20).ToArray();
+            var total = instances.Sum(item => item.MissingCount);
+            return new CommandCenterActionResult(true, instances.Length == 0
+                ? "*arr missing: none reported."
+                : FitDiscordMessage([ $"** *arr missing** · {total} total", string.Join("\n", instances.Select(item => $"- **{item.Name}** · {item.MissingCount} missing")) ]));
+        }
+        if (action is "status" or "instances")
+        {
+            var instances = (await operations.GetSnapshotAsync(cancellationToken)).Arr.Instances.Take(20).ToArray();
+            return new CommandCenterActionResult(true, instances.Length == 0
+                ? "*arr status: no configured instances reported."
+                : FitDiscordMessage(["** *arr status**", string.Join("\n", instances.Select(item => $"- **{item.Name}** · {(item.Connected ? "connected" : "offline")} · v{item.Version ?? "unknown"} · {item.QueueCount} queued · {item.MissingCount} missing"))]));
+        }
         return Fail("Use arr health, arr history, arr calendar, arr search-missing <service> [confirm], or arr refresh <service>.");
+    }
+
+    private CommandCenterActionResult SystemSummary()
+    {
+        var stats = systemStats.GetStats();
+        return new CommandCenterActionResult(true, FitDiscordMessage([
+            $"**System · {stats.Hostname}**",
+            $"CPU {stats.CpuPercent:0.#}% · memory {stats.MemoryUsedPercent:0.#}% · uptime {FormatDuration(stats.UptimeSeconds)}",
+            $"OS: {stats.OsVersion ?? "unknown"} · pending reboot: {(stats.PendingReboot ? "yes" : "no")}",
+            $"Network: ↓ {Rate(stats.NetworkReceiveBytesPerSecond)} · ↑ {Rate(stats.NetworkSendBytesPerSecond)}"]));
+    }
+
+    private CommandCenterActionResult NetworkSummary()
+    {
+        var stats = systemStats.GetStats();
+        var interfaces = stats.NetworkInterfaces ?? [];
+        var lines = interfaces.Take(12).Select(item => $"- **{item.Name}** · ↓ {Rate(item.ReceiveBytesPerSecond)} / ↑ {Rate(item.SendBytesPerSecond)} · packets/s {item.ReceivePacketsPerSecond:0.#}/{item.SendPacketsPerSecond:0.#} · errors {item.IncomingErrors + item.OutgoingErrors}");
+        var probe = stats.NetworkProbe is null ? "Probe: not configured." : $"Probe {stats.NetworkProbe.Target}: loss {stats.NetworkProbe.PacketLossPercent:0.#}% · latency {stats.NetworkProbe.AverageLatencyMilliseconds?.ToString("0.#") ?? "n/a"} ms";
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Network telemetry**", $"Aggregate: ↓ {Rate(stats.NetworkReceiveBytesPerSecond)} · ↑ {Rate(stats.NetworkSendBytesPerSecond)}", probe, string.Join("\n", lines)]));
+    }
+
+    private CommandCenterActionResult StorageSummary()
+    {
+        var stats = systemStats.GetStats();
+        var lines = stats.Disks.Take(12).Select(item => $"- **{item.Name}** · {PercentUsed(item.TotalBytes, item.FreeBytes):0.#}% used · {Bytes(item.FreeBytes)} free of {Bytes(item.TotalBytes)}");
+        return new CommandCenterActionResult(true, lines.Any()
+            ? FitDiscordMessage(["**Storage**", string.Join("\n", lines)])
+            : "Storage: no disk data reported.");
+    }
+
+    private CommandCenterActionResult UptimeSummary()
+    {
+        var stats = systemStats.GetStats();
+        return new CommandCenterActionResult(true, $"**{stats.Hostname} uptime**: {FormatDuration(stats.UptimeSeconds)} (captured {stats.CapturedAt.LocalDateTime:g}).");
+    }
+
+    private CommandCenterActionResult ProcessSummary()
+    {
+        var processes = systemStats.GetStats().TopProcesses ?? [];
+        return new CommandCenterActionResult(true, processes.Count == 0
+            ? "Processes: no process telemetry reported."
+            : FitDiscordMessage(["**Top processes**", string.Join("\n", processes.Take(12).Select(item => $"- **{item.Name}** (PID {item.ProcessId}) · {Bytes(item.WorkingSetBytes)} RAM · CPU {item.CpuTime:g}"))]));
+    }
+
+    private async Task<CommandCenterActionResult> IncidentSummaryAsync(CancellationToken cancellationToken)
+    {
+        var incidents = (await operations.GetSnapshotAsync(cancellationToken)).Incidents.Take(20).ToArray();
+        return new CommandCenterActionResult(true, incidents.Length == 0
+            ? "Incidents: none active."
+            : FitDiscordMessage(["**Active incidents**", string.Join("\n", incidents.Select(item => $"- **{item.ServiceName}** · {item.Severity} · since {item.StartedAt.LocalDateTime:g}: {Short(item.Message, 110)}"))]));
+    }
+
+    private static string Rate(long bytesPerSecond) => bytesPerSecond <= 0 ? "0 B/s" : $"{Bytes(bytesPerSecond)}/s";
+
+    private static string Bytes(long bytes)
+    {
+        var value = (double)Math.Max(0, bytes);
+        var units = new[] { "B", "KB", "MB", "GB", "TB" };
+        var index = 0;
+        while (value >= 1024 && index < units.Length - 1) { value /= 1024; index++; }
+        return $"{value:0.##} {units[index]}";
+    }
+
+    private static double PercentUsed(long total, long free) => total <= 0 ? 0 : Math.Clamp((double)(total - free) / total * 100, 0, 100);
+
+    private static string FormatDuration(long seconds)
+    {
+        if (seconds <= 0) return "unknown";
+        var span = TimeSpan.FromSeconds(seconds);
+        return span.TotalDays >= 1 ? $"{span.TotalDays:0.#}d" : span.TotalHours >= 1 ? $"{span.TotalHours:0.#}h" : $"{Math.Max(1, span.TotalMinutes):0}m";
     }
 
     private async Task<CommandCenterActionResult> PlaybackAsync(CancellationToken cancellationToken)
@@ -765,11 +887,10 @@ public sealed class DiscordCommandRouter(
             || value.Equals("remove", StringComparison.OrdinalIgnoreCase);
 
         static bool IsMutatingArrAction(string value) => value.Equals("search-missing", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("missing", StringComparison.OrdinalIgnoreCase)
             || value.Equals("refresh", StringComparison.OrdinalIgnoreCase)
             || value.Equals("refresh-downloads", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Help() => "Supported commands: services list|offline|degraded, agents, alerts, commands, downloads [pause|resume|recheck|remove], arr health|history|calendar|search-missing|refresh, playback, activity, maintenance list|add|remove, restart service <name>, backup now, restore <id>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
+    private static string Help() => "Supported commands: system, network, storage, uptime, processes, incidents, services list|offline|degraded, agents, alerts, commands, downloads [pause|resume|recheck|remove], arr status|health|queue|missing|history|calendar|search-missing|refresh, playback, activity, maintenance list|add|remove, restart service <name>, backup now, restore <id>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
 }
 

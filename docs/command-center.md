@@ -109,15 +109,25 @@ The Discord intake command also supports an operational readout batch for quick 
 services list
 services offline
 services degraded
+services show <id or name>
 agents
 alerts
 commands
+system
+network
+storage
+uptime
+processes
+incidents
 downloads
 downloads pause <id or name>
 downloads resume <id or name>
 downloads recheck <id or name>
 downloads remove <id or name>
 arr health
+arr status
+arr queue
+arr missing
 arr history
 arr calendar
 arr search-missing <service> confirm
