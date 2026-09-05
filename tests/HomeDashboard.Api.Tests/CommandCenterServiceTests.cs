@@ -538,6 +538,35 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordCommandRouterReportsSystemAndArrReadouts()
+    {
+        var service = CreateService();
+        EnableDiscordProfileMapping(service);
+        var operations = new RecordingOperationsService { Snapshot = CreateOperationsSnapshot() with
+        {
+            Incidents = [new IncidentSummary("incident-1", "radarr", "Radarr", NotificationSeverity.Critical,
+                "Connection refused", DateTimeOffset.UtcNow.AddMinutes(-5))],
+            Arr = new ArrOperationsSummary(
+                [new ArrInstanceSummary("radarr", "Radarr", ServiceKind.Radarr, true, "5.0", 1, 0, 3)],
+                [new ArrQueueItem("queue-1", "radarr", "Radarr", "Dune", "1080p", "downloading", null, 35, null)],
+                [], [])
+        }};
+        var router = CreateRouter(service, operations: operations);
+
+        var system = await router.ExecuteAsync("system", "Alex", 123, CancellationToken.None);
+        var details = await router.ExecuteAsync("services show Plex", "Alex", 123, CancellationToken.None);
+        var queue = await router.ExecuteAsync("arr queue", "Alex", 123, CancellationToken.None);
+        var missing = await router.ExecuteAsync("arr missing", "Alex", 123, CancellationToken.None);
+        var incidents = await router.ExecuteAsync("incidents", "Alex", 123, CancellationToken.None);
+
+        Assert.Contains("server-pc", system.Message);
+        Assert.Contains("Plex", details.Message);
+        Assert.Contains("Dune", queue.Message);
+        Assert.Contains("3 total", missing.Message);
+        Assert.Contains("Connection refused", incidents.Message);
+    }
+
+    [Fact]
     public void DiscordConfigurationRequiresEnabledConnectorAndParsesAllowlists()
     {
         var service = CreateService();
