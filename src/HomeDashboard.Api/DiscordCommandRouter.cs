@@ -34,9 +34,21 @@ public sealed class DiscordCommandRouter(
             if (tokens is ["restore", ..])
                 return Fail("Restore requires a dashboard backup payload; Discord restore by id is not available yet.");
             if (tokens[0] == "maintenance")
-                return AddMaintenance(command["maintenance".Length..].Trim(), actor);
+                return await MaintenanceCommandAsync(parts, actor, cancellationToken);
             if (tokens[0] == "machine")
                 return await QueueMachineAsync(parts, actor, cancellationToken);
+            if (tokens[0] is "service" or "services")
+                return await ServicesCommandAsync(parts, cancellationToken);
+            if (tokens[0] is "agent" or "agents")
+                return await AgentsAsync(cancellationToken);
+            if (tokens[0] is "alert" or "alerts")
+                return await AlertsAsync(cancellationToken);
+            if (tokens[0] is "commands" or "commandqueue")
+                return CommandsAsync();
+            if (tokens[0] is "downloads" or "download")
+                return await DownloadsAsync(cancellationToken);
+            if (tokens[0] is "activity" or "recent")
+                return await ActivityAsync(cancellationToken);
             if (tokens[0] is "status" or "health")
                 return await StatusAsync(cancellationToken);
             if (tokens[0] == "mode" && tokens.ElementAtOrDefault(1) == "status")
@@ -120,6 +132,42 @@ public sealed class DiscordCommandRouter(
         return new CommandCenterActionResult(true, $"Maintenance queued: {window.Title} until {window.EndsAt.LocalDateTime:g}.");
     }
 
+    private async Task<CommandCenterActionResult> MaintenanceCommandAsync(string[] parts, string actor, CancellationToken cancellationToken)
+    {
+        var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant();
+        if (action is "list" or "show")
+            return await MaintenanceListAsync(cancellationToken);
+        if (action is "remove" or "delete" or "clear")
+            return RemoveMaintenance(string.Join(' ', parts.Skip(2)));
+        if (action == "add")
+            return AddMaintenance(string.Join(' ', parts.Skip(2)), actor);
+        return AddMaintenance(string.Join(' ', parts.Skip(1)), actor);
+    }
+
+    private async Task<CommandCenterActionResult> MaintenanceListAsync(CancellationToken cancellationToken)
+    {
+        var windows = (await operations.GetSnapshotAsync(cancellationToken)).Maintenance
+            .OrderBy(item => item.EndsAt)
+            .Take(12)
+            .ToArray();
+        if (windows.Length == 0) return new CommandCenterActionResult(true, "No maintenance windows are active.");
+        var lines = windows.Select(item => $"- **{item.Title}** until {item.EndsAt.LocalDateTime:g} · id `{item.Id}`");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Maintenance windows**", string.Join("\n", lines)]));
+    }
+
+    private CommandCenterActionResult RemoveMaintenance(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Fail("Provide a maintenance id or title.");
+        var windows = operations.GetMaintenance();
+        var match = windows.FirstOrDefault(item => item.Id.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? windows.FirstOrDefault(item => item.Title.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase))
+            ?? windows.FirstOrDefault(item => item.Title.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (match is null) return new CommandCenterActionResult(false, $"No maintenance window matched '{query}'.");
+        return operations.RemoveMaintenance(match.Id)
+            ? new CommandCenterActionResult(true, $"Removed maintenance window: {match.Title}.")
+            : new CommandCenterActionResult(false, $"Could not remove maintenance window: {match.Title}.");
+    }
+
     private async Task<CommandCenterActionResult> QueueMachineAsync(string[] parts, string actor, CancellationToken cancellationToken)
     {
         if (parts.Length < 3) return Fail("Machine commands require an action and agent ID.");
@@ -136,6 +184,97 @@ public sealed class DiscordCommandRouter(
         var agentId = parts[2];
         return await commandCenter.ExecuteAsync(new CommandCenterActionRequest(tool, agentId, true,
             new Dictionary<string, string> { ["requestedBy"] = actor }), cancellationToken);
+    }
+
+    private async Task<CommandCenterActionResult> ServicesCommandAsync(string[] parts, CancellationToken cancellationToken)
+    {
+        var filter = parts.ElementAtOrDefault(1)?.ToLowerInvariant() switch
+        {
+            "offline" or "down" => ServiceStatus.Offline,
+            "degraded" or "warning" => ServiceStatus.Degraded,
+            "online" or "healthy" => ServiceStatus.Online,
+            _ => (ServiceStatus?)null
+        };
+        var all = await services.GetServicesAsync(cancellationToken);
+        var selected = all.Where(item => filter is null || item.Status == filter.Value)
+            .OrderBy(item => item.Status)
+            .ThenBy(item => item.Name)
+            .Take(20)
+            .ToArray();
+        if (selected.Length == 0) return new CommandCenterActionResult(true,
+            filter is null ? "No services are configured." : $"No {filter.Value.ToString().ToLowerInvariant()} services found.");
+        var lines = selected.Select(item => $"- **{item.Name}** · {item.Status}{Suffix(Short(item.StatusMessage ?? item.Description, 80))}");
+        var title = filter is null ? "Services" : $"{filter.Value} services";
+        return new CommandCenterActionResult(true, FitDiscordMessage([$"**{title}**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> AgentsAsync(CancellationToken cancellationToken)
+    {
+        if (dashboard is null) return new CommandCenterActionResult(false, "Agent status requires the dashboard snapshot service.");
+        var agents = (await dashboard.GetSnapshotAsync(cancellationToken)).Agents
+            .OrderBy(item => item.Status)
+            .ThenBy(item => item.AgentId)
+            .Take(20)
+            .ToArray();
+        if (agents.Length == 0) return new CommandCenterActionResult(true, "No agents have checked in yet.");
+        var lines = agents.Select(item => $"- **{item.AgentId}** · {item.Status} · {item.ServicesMonitored} services · last {item.LastSeenAt.LocalDateTime:g}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Agents**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> AlertsAsync(CancellationToken cancellationToken)
+    {
+        var dashboardAlerts = dashboard is null
+            ? []
+            : (await dashboard.GetSnapshotAsync(cancellationToken)).Notifications
+                .Where(item => item.Severity != NotificationSeverity.Info)
+                .Select(item => $"- **{item.Title}** · {item.Severity}: {Short(item.Message, 100)}");
+        var commandAlerts = (await commandCenter.GetSnapshotAsync(cancellationToken)).Inbox
+            .Where(item => !item.Acknowledged && item.Severity != NotificationSeverity.Info)
+            .Select(item => $"- **{item.Title}** · {item.Severity}: {Short(item.Message, 100)}");
+        var lines = dashboardAlerts.Concat(commandAlerts).Take(15).ToArray();
+        return new CommandCenterActionResult(true, lines.Length == 0
+            ? "No alerts need attention."
+            : FitDiscordMessage(["**Alerts needing attention**", string.Join("\n", lines)]));
+    }
+
+    private CommandCenterActionResult CommandsAsync()
+    {
+        if (commandStore is null) return new CommandCenterActionResult(false, "Command queue requires the command store.");
+        var commands = commandStore.GetRecentCommands(25)
+            .OrderByDescending(item => item.RequestedAt)
+            .Take(12)
+            .ToArray();
+        if (commands.Length == 0) return new CommandCenterActionResult(true, "No recent agent commands.");
+        var lines = commands.Select(item => $"- **{item.Kind}** on {item.AgentId} · {item.State} · {item.RequestedAt.LocalDateTime:g}{Suffix(item.Message)}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Agent command queue**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> DownloadsAsync(CancellationToken cancellationToken)
+    {
+        var downloads = (await operations.GetSnapshotAsync(cancellationToken)).Downloads
+            .OrderByDescending(item => item.DownloadSpeedBytes ?? 0)
+            .ThenBy(item => item.Name)
+            .Take(12)
+            .ToArray();
+        if (downloads.Length == 0) return new CommandCenterActionResult(true, "Download clients report an empty queue.");
+        var lines = downloads.Select(item => $"- **{item.Name}** · {item.Status} · {item.ProgressPercent:0}%{SpeedSuffix(item.DownloadSpeedBytes)}{EtaSuffix(item.Eta)}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Downloads**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> ActivityAsync(CancellationToken cancellationToken)
+    {
+        var operationsActivity = (await operations.GetSnapshotAsync(cancellationToken)).Activity
+            .OrderByDescending(item => item.OccurredAt)
+            .Take(8)
+            .Select(item => $"- **{item.Source}** · {item.Title}: {Short(item.Detail, 100)}");
+        var commandActivity = (await commandCenter.GetSnapshotAsync(cancellationToken)).Activity
+            .OrderByDescending(item => item.OccurredAt)
+            .Take(8)
+            .Select(item => $"- **{item.Tool}** · {Short(item.Message, 100)}");
+        var lines = operationsActivity.Concat(commandActivity).Take(12).ToArray();
+        return new CommandCenterActionResult(true, lines.Length == 0
+            ? "No recent dashboard activity."
+            : FitDiscordMessage(["**Recent activity**", string.Join("\n", lines)]));
     }
 
     private async Task<CommandCenterActionResult> StatusAsync(CancellationToken cancellationToken)
@@ -476,6 +615,24 @@ public sealed class DiscordCommandRouter(
         "task" or "tasks" or "note" or "notes" or "shopping" or "shop" or "calendar" or "agenda" or
         "package" or "delivery" or "media" or "automation";
 
+    private static string Suffix(string? value) => string.IsNullOrWhiteSpace(value) ? "" : $" - {value}";
+
+    private static string Short(string value, int length) => value.Length <= length ? value : value[..Math.Max(0, length - 3)] + "...";
+
+    private static string SpeedSuffix(long? bytesPerSecond)
+    {
+        if (bytesPerSecond is null or <= 0) return "";
+        var mb = bytesPerSecond.Value / 1024d / 1024d;
+        return $" - {mb:0.0} MB/s";
+    }
+
+    private static string EtaSuffix(TimeSpan? eta)
+    {
+        if (eta is null) return "";
+        if (eta.Value.TotalHours >= 1) return $" - ETA {eta.Value.TotalHours:0.0}h";
+        return $" - ETA {Math.Max(1, eta.Value.TotalMinutes):0}m";
+    }
+
     private static string FitDiscordMessage(IEnumerable<string> sections)
     {
         const int limit = 1900;
@@ -511,6 +668,6 @@ public sealed class DiscordCommandRouter(
                 && parts[1].Equals("service", StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static string Help() => "Supported commands: restart service <name>, backup now, restore <id>, maintenance <task>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
+    private static string Help() => "Supported commands: services list|offline|degraded, agents, alerts, commands, downloads, activity, maintenance list|add|remove, restart service <name>, backup now, restore <id>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
 }
 

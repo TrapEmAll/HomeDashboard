@@ -103,6 +103,23 @@ Default commands use the `!hd` prefix:
 
 Dates are interpreted in the API computer's local culture and time zone. `today` and `tomorrow` are accepted for quick task, agenda, and package capture. The command prefix can be changed in the Discord connector.
 
+The Discord intake command also supports an operational readout batch for quick phone checks:
+
+```text
+services list
+services offline
+services degraded
+agents
+alerts
+commands
+downloads
+maintenance list
+maintenance remove <id or title>
+activity
+```
+
+These commands are read-only except `maintenance remove`, which removes an existing maintenance window by id, exact title, or partial title.
+
 For verified media requests, configure the Sonarr and Radarr service URLs and API keys in HomeDashboard, plus at least one root folder and quality profile in each application. `/home media search` queries both catalogs. `/home media add` provides native Discord autocomplete in its `media_title` field with year, media type, source application, and IMDb ID, then adds the selected release directly to Sonarr or Radarr. Discord does not provide native autocomplete while typing an ordinary prefix message, so an ambiguous `!hd media add ...` response includes a release selection menu instead.
 
 For immediate slash-command registration, set **Allowed server IDs** to the Discord server ID where the bot is installed. With no server ID, HomeDashboard registers `/home` globally. The Discord connector status reports whether server commands are ready, globally registered, or failed because a configured server ID does not contain the bot.
