@@ -476,6 +476,68 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordCommandRouterControlsDownloadsAndReadsMediaOperations()
+    {
+        var service = CreateService();
+        EnableDiscordProfileMapping(service);
+        var operations = new RecordingOperationsService { Snapshot = CreateOperationsSnapshot() with
+        {
+            Calendar = [new MediaCalendarItem("cal-1", "Sonarr", "The Expanse", "S5E1", DateTimeOffset.UtcNow.AddHours(2), "TV", true, false)],
+            PlaybackSessions = [new PlaybackSession("plex-1", "Alex", "Dune", "Part Two", "Living room", "DirectPlay", 55, "4K", 25000)],
+            Arr = new ArrOperationsSummary(
+                [new ArrInstanceSummary("sonarr", "Sonarr", ServiceKind.Sonarr, true, "4.0", 2, 1, 4)],
+                [],
+                [new ArrHealthIssue("health-1", "sonarr", "Sonarr", "warning", "Indexer certificate expires soon.")],
+                [new ArrHistoryItem("history-1", "sonarr", "Sonarr", "The Expanse", "grabbed", DateTimeOffset.UtcNow, "HD-1080p")])
+        }};
+        var router = CreateRouter(service, operations: operations);
+
+        var downloads = await router.ExecuteAsync("downloads pause Ubuntu.iso", "Alex", 123, CancellationToken.None);
+        var health = await router.ExecuteAsync("arr health", "Alex", 123, CancellationToken.None);
+        var history = await router.ExecuteAsync("arr history", "Alex", 123, CancellationToken.None);
+        var calendar = await router.ExecuteAsync("arr calendar", "Alex", 123, CancellationToken.None);
+        var playback = await router.ExecuteAsync("playback", "Alex", 123, CancellationToken.None);
+
+        Assert.True(downloads.Succeeded);
+        Assert.Equal(DownloadControlAction.Pause, operations.DownloadRequest?.Action);
+        Assert.Contains("certificate", health.Message);
+        Assert.Contains("grabbed", history.Message);
+        Assert.Contains("The Expanse", calendar.Message);
+        Assert.Contains("Dune", playback.Message);
+    }
+
+    [Fact]
+    public async Task DiscordDownloadControlsRequireAdministratorAndArrSearchRequiresConfirmation()
+    {
+        var service = CreateService();
+        service.Upsert(new CommandCenterItemRequest("profile", null, "Alex", Fields: new Dictionary<string, string>
+        {
+            ["username"] = "alex",
+            ["password"] = "a-strong-household-password",
+            ["role"] = "Member"
+        }));
+        var profileId = (await service.GetSnapshotAsync(CancellationToken.None)).Profiles.Single(item => item.DisplayName == "Alex").Id;
+        service.UpdateIntegration("discord", new UpdateIntegrationRequest("Discord", null, true, "bot-token",
+            new Dictionary<string, string> { ["profileMappings"] = $"123:{profileId}" }));
+        var operations = new RecordingOperationsService { Snapshot = CreateOperationsSnapshot() with
+        {
+            Arr = new ArrOperationsSummary([new ArrInstanceSummary("sonarr", "Sonarr", ServiceKind.Sonarr, true, "4.0", 0, 0, 2)], [], [], [])
+        }};
+        var router = CreateRouter(service, operations: operations);
+
+        var denied = await router.ExecuteAsync("downloads remove Ubuntu.iso", "Alex", 123, CancellationToken.None);
+        EnableDiscordProfileMapping(service);
+        var confirmation = await CreateRouter(service, operations: operations)
+            .ExecuteAsync("arr search-missing Sonarr", "Alex", 123, CancellationToken.None);
+
+        Assert.False(denied.Succeeded);
+        Assert.Contains("Administrator", denied.Message);
+        Assert.False(confirmation.Succeeded);
+        Assert.True(confirmation.RequiresConfirmation);
+        Assert.Contains("substantial", confirmation.Message);
+    }
+
+    [Fact]
     public void DiscordConfigurationRequiresEnabledConnectorAndParsesAllowlists()
     {
         var service = CreateService();
@@ -606,9 +668,21 @@ public sealed class CommandCenterServiceTests : IDisposable
     {
         public List<MaintenanceWindow> Windows { get; } = [];
         public OperationsSnapshot Snapshot { get; set; } = CreateOperationsSnapshot([], [], [], []);
+        public DownloadControlRequest? DownloadRequest { get; private set; }
+        public ArrCommandRequest? ArrRequest { get; private set; }
         public Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot with { Maintenance = Windows.ToArray() });
-        public Task<bool> ControlDownloadAsync(DownloadControlRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<bool> ControlDownloadAsync(DownloadControlRequest request, CancellationToken cancellationToken)
+        {
+            DownloadRequest = request;
+            return Task.FromResult(true);
+        }
+        public Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken)
+        {
+            ArrRequest = request;
+            return Task.FromResult(request.Action == ArrCommandAction.SearchMissing && !request.Confirmed
+                ? new ArrCommandResult(false, true, "Search all monitored missing items? This can create substantial indexer activity.")
+                : new ArrCommandResult(true, false, "Command accepted."));
+        }
         public IReadOnlyList<MaintenanceWindow> GetMaintenance() => Windows;
         public MaintenanceWindow AddMaintenance(CreateMaintenanceWindowRequest request, string actor)
         {

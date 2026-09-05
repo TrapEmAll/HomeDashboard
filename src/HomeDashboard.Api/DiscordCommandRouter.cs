@@ -46,7 +46,11 @@ public sealed class DiscordCommandRouter(
             if (tokens[0] is "commands" or "commandqueue")
                 return CommandsAsync();
             if (tokens[0] is "downloads" or "download")
-                return await DownloadsAsync(cancellationToken);
+                return await DownloadsCommandAsync(parts, actor, cancellationToken);
+            if (tokens[0] is "arr" or "arrops")
+                return await ArrCommandAsync(parts, actor, cancellationToken);
+            if (tokens[0] is "playback" or "playing" or "plex")
+                return await PlaybackAsync(cancellationToken);
             if (tokens[0] is "activity" or "recent")
                 return await ActivityAsync(cancellationToken);
             if (tokens[0] is "status" or "health")
@@ -249,6 +253,15 @@ public sealed class DiscordCommandRouter(
         return new CommandCenterActionResult(true, FitDiscordMessage(["**Agent command queue**", string.Join("\n", lines)]));
     }
 
+    private async Task<CommandCenterActionResult> DownloadsCommandAsync(string[] parts, string actor, CancellationToken cancellationToken)
+    {
+        var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant();
+        if (action is "pause" or "resume" or "recheck" or "remove")
+            return await ControlDownloadAsync(action, string.Join(' ', parts.Skip(2)), actor, cancellationToken);
+
+        return await DownloadsAsync(cancellationToken);
+    }
+
     private async Task<CommandCenterActionResult> DownloadsAsync(CancellationToken cancellationToken)
     {
         var downloads = (await operations.GetSnapshotAsync(cancellationToken)).Downloads
@@ -259,6 +272,79 @@ public sealed class DiscordCommandRouter(
         if (downloads.Length == 0) return new CommandCenterActionResult(true, "Download clients report an empty queue.");
         var lines = downloads.Select(item => $"- **{item.Name}** · {item.Status} · {item.ProgressPercent:0}%{SpeedSuffix(item.DownloadSpeedBytes)}{EtaSuffix(item.Eta)}");
         return new CommandCenterActionResult(true, FitDiscordMessage(["**Downloads**", string.Join("\n", lines)]));
+    }
+
+    private async Task<CommandCenterActionResult> ControlDownloadAsync(string action, string query, string actor, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return Fail($"Provide a download id or name to {action}.");
+        var deleteData = action == "remove" && query.EndsWith(" data", StringComparison.OrdinalIgnoreCase);
+        var lookup = deleteData ? query[..^5].TrimEnd() : query.Trim();
+        var snapshot = await operations.GetSnapshotAsync(cancellationToken);
+        var item = snapshot.Downloads.FirstOrDefault(candidate => candidate.Id.Equals(lookup, StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.Downloads.FirstOrDefault(candidate => candidate.Name.Equals(lookup, StringComparison.OrdinalIgnoreCase))
+            ?? snapshot.Downloads.FirstOrDefault(candidate => candidate.Name.Contains(lookup, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return Fail($"No download matched '{lookup}'.");
+        var control = action switch
+        {
+            "pause" => DownloadControlAction.Pause,
+            "resume" => DownloadControlAction.Resume,
+            "recheck" => DownloadControlAction.Recheck,
+            "remove" => DownloadControlAction.Remove,
+            _ => throw new InvalidOperationException("Unknown download action.")
+        };
+        var succeeded = await operations.ControlDownloadAsync(new DownloadControlRequest(item.Source, item.Id, control, deleteData), cancellationToken);
+        return new CommandCenterActionResult(succeeded,
+            succeeded ? $"{action} queued for {item.Name}." : $"Could not {action} {item.Name}.");
+    }
+
+    private async Task<CommandCenterActionResult> ArrCommandAsync(string[] parts, string actor, CancellationToken cancellationToken)
+    {
+        var action = parts.ElementAtOrDefault(1)?.ToLowerInvariant();
+        if (action is "health" or "issues")
+        {
+            var issues = (await operations.GetSnapshotAsync(cancellationToken)).Arr.Health.Take(20).ToArray();
+            return new CommandCenterActionResult(true, issues.Length == 0
+                ? "*arr health: no issues reported."
+                : FitDiscordMessage(["** *arr health**", string.Join("\n", issues.Select(item => $"- **{item.Source}** · {item.Type}: {Short(item.Message, 120)}"))]));
+        }
+        if (action is "history" or "recent")
+        {
+            var history = (await operations.GetSnapshotAsync(cancellationToken)).Arr.History.Take(15).ToArray();
+            return new CommandCenterActionResult(true, history.Length == 0
+                ? "*arr history: no recent events."
+                : FitDiscordMessage(["** *arr history**", string.Join("\n", history.Select(item => $"- **{item.Title}** · {item.EventType} · {item.Source} · {item.OccurredAt.LocalDateTime:g}"))]));
+        }
+        if (action is "calendar" or "upcoming")
+        {
+            var calendar = (await operations.GetSnapshotAsync(cancellationToken)).Calendar
+                .OrderBy(item => item.AirsAt).Take(15).ToArray();
+            return new CommandCenterActionResult(true, calendar.Length == 0
+                ? "Media calendar: nothing upcoming."
+                : FitDiscordMessage(["**Media calendar**", string.Join("\n", calendar.Select(item => $"- **{item.Title}** · {item.AirsAt.LocalDateTime:g} · {item.Source}"))]));
+        }
+        if (action is "search-missing" or "missing" or "refresh" or "refresh-downloads")
+        {
+            var serviceId = string.Join(' ', parts.Skip(2)).Trim();
+            if (string.IsNullOrWhiteSpace(serviceId)) return Fail("Provide the *arr service id or name.");
+            var service = (await operations.GetSnapshotAsync(cancellationToken)).Arr.Instances.FirstOrDefault(item =>
+                item.ServiceId.Equals(serviceId, StringComparison.OrdinalIgnoreCase)
+                || item.Name.Equals(serviceId, StringComparison.OrdinalIgnoreCase)
+                || item.Name.Contains(serviceId, StringComparison.OrdinalIgnoreCase));
+            if (service is null) return Fail($"No configured *arr service matched '{serviceId}'.");
+            var command = action is "search-missing" or "missing" ? ArrCommandAction.SearchMissing : ArrCommandAction.RefreshMonitoredDownloads;
+            var confirmed = parts.Any(item => item.Equals("confirm", StringComparison.OrdinalIgnoreCase));
+            var result = await operations.RunArrCommandAsync(new ArrCommandRequest(service.ServiceId, command, confirmed), actor, cancellationToken);
+            return new CommandCenterActionResult(result.Succeeded, result.Message, result.RequiresConfirmation);
+        }
+        return Fail("Use arr health, arr history, arr calendar, arr search-missing <service> [confirm], or arr refresh <service>.");
+    }
+
+    private async Task<CommandCenterActionResult> PlaybackAsync(CancellationToken cancellationToken)
+    {
+        var sessions = (await operations.GetSnapshotAsync(cancellationToken)).PlaybackSessions.Take(15).ToArray();
+        if (sessions.Length == 0) return new CommandCenterActionResult(true, "Plex playback: nothing is playing.");
+        var lines = sessions.Select(item => $"- **{item.Title}** · {item.User} on {item.Player} · {item.ProgressPercent}%{Suffix(item.VideoResolution)}");
+        return new CommandCenterActionResult(true, FitDiscordMessage(["**Plex playback**", string.Join("\n", lines)]));
     }
 
     private async Task<CommandCenterActionResult> ActivityAsync(CancellationToken cancellationToken)
@@ -665,9 +751,25 @@ public sealed class DiscordCommandRouter(
         var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return parts.Length >= 2 && (parts[0].Equals("machine", StringComparison.OrdinalIgnoreCase)
             || (parts[0].Equals("restart", StringComparison.OrdinalIgnoreCase)
-                && parts[1].Equals("service", StringComparison.OrdinalIgnoreCase)));
+                && parts[1].Equals("service", StringComparison.OrdinalIgnoreCase))
+            || (parts[0].Equals("downloads", StringComparison.OrdinalIgnoreCase)
+                && IsMutatingDownloadAction(parts[1]))
+            || (parts[0].Equals("download", StringComparison.OrdinalIgnoreCase)
+                && IsMutatingDownloadAction(parts[1]))
+            || (parts[0].Equals("arr", StringComparison.OrdinalIgnoreCase)
+                && IsMutatingArrAction(parts[1])));
+
+        static bool IsMutatingDownloadAction(string value) => value.Equals("pause", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("resume", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("recheck", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("remove", StringComparison.OrdinalIgnoreCase);
+
+        static bool IsMutatingArrAction(string value) => value.Equals("search-missing", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("missing", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("refresh", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("refresh-downloads", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Help() => "Supported commands: services list|offline|degraded, agents, alerts, commands, downloads, activity, maintenance list|add|remove, restart service <name>, backup now, restore <id>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
+    private static string Help() => "Supported commands: services list|offline|degraded, agents, alerts, commands, downloads [pause|resume|recheck|remove], arr health|history|calendar|search-missing|refresh, playback, activity, maintenance list|add|remove, restart service <name>, backup now, restore <id>, machine <lock|sleep|restart|shutdown> <agentId>, list rules, run rule <name>, enable rule <name>, disable rule <name>, status, health.";
 }
 
