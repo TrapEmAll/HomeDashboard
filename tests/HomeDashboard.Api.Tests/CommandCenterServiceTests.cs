@@ -423,6 +423,46 @@ public sealed class CommandCenterServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiscordCommandRouterReportsOperationalReadouts()
+    {
+        var service = CreateService();
+        service.Ingest(new CommandCenterWebhook("UPS", "battery", "Battery low", "Runtime is under ten minutes", NotificationSeverity.Warning));
+        EnableDiscordProfileMapping(service);
+        var commands = new RecordingCommandStore();
+        commands.EnqueueMachine("server-pc", AgentCommandKind.LockComputer, new RestartRequest("Alex", "test", true));
+        var operations = new RecordingOperationsService
+        {
+            Snapshot = CreateOperationsSnapshot()
+        };
+        operations.Windows.Add(new MaintenanceWindow("maint-1", "Patch server", DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddHours(1), null, true, "Alex"));
+        var router = CreateRouter(service, operations: operations, dashboard: new StaticDashboardService(commands), commandStore: commands);
+
+        var services = await router.ExecuteAsync("services list", "Alex", 123, CancellationToken.None);
+        var offline = await router.ExecuteAsync("services offline", "Alex", 123, CancellationToken.None);
+        var degraded = await router.ExecuteAsync("services degraded", "Alex", 123, CancellationToken.None);
+        var agents = await router.ExecuteAsync("agents", "Alex", 123, CancellationToken.None);
+        var alerts = await router.ExecuteAsync("alerts", "Alex", 123, CancellationToken.None);
+        var commandQueue = await router.ExecuteAsync("commands", "Alex", 123, CancellationToken.None);
+        var downloads = await router.ExecuteAsync("downloads", "Alex", 123, CancellationToken.None);
+        var activity = await router.ExecuteAsync("activity", "Alex", 123, CancellationToken.None);
+        var maintenanceList = await router.ExecuteAsync("maintenance list", "Alex", 123, CancellationToken.None);
+        var maintenanceRemove = await router.ExecuteAsync("maintenance remove Patch", "Alex", 123, CancellationToken.None);
+
+        Assert.Contains("Plex", services.Message);
+        Assert.Contains("Radarr", offline.Message);
+        Assert.Contains("Sonarr", degraded.Message);
+        Assert.Contains("server-pc", agents.Message);
+        Assert.Contains("Battery low", alerts.Message);
+        Assert.Contains("LockComputer", commandQueue.Message);
+        Assert.Contains("Ubuntu.iso", downloads.Message);
+        Assert.Contains("Import completed", activity.Message);
+        Assert.Contains("Patch server", maintenanceList.Message);
+        Assert.Contains("Removed", maintenanceRemove.Message);
+        Assert.Empty(operations.Windows);
+    }
+
+    [Fact]
     public async Task MachineActionsPreserveDiscordActor()
     {
         var commands = new RecordingCommandStore();
@@ -501,9 +541,12 @@ public sealed class CommandCenterServiceTests : IDisposable
     private static DiscordCommandRouter CreateRouter(
         ICommandCenterService commandCenter,
         IRestartCoordinator? restarts = null,
-        IOperationsService? operations = null) =>
+        IOperationsService? operations = null,
+        IDashboardService? dashboard = null,
+        IAgentCommandStore? commandStore = null) =>
         new(new DiscordCommandProcessor(commandCenter), restarts ?? new RecordingRestartCoordinator(), new StaticServiceStatusProvider(),
-            new StaticSystemStatsProvider(), new StaticSetupService(), operations ?? new RecordingOperationsService(), commandCenter);
+            new StaticSystemStatsProvider(), new StaticSetupService(), operations ?? new RecordingOperationsService(), commandCenter,
+            dashboard, commandStore);
 
     public void Dispose()
     {
@@ -522,7 +565,11 @@ public sealed class CommandCenterServiceTests : IDisposable
             Task.FromResult<IReadOnlyList<ServiceCard>>(
             [
                 new ServiceCard("plex", "Plex", ServiceKind.Plex, "Media server", null, ServiceStatus.Online, true,
-                    DateTimeOffset.UtcNow, null, [])
+                    DateTimeOffset.UtcNow, null, []),
+                new ServiceCard("sonarr", "Sonarr", ServiceKind.Sonarr, "TV automation", null, ServiceStatus.Degraded, true,
+                    DateTimeOffset.UtcNow, "API warning", []),
+                new ServiceCard("radarr", "Radarr", ServiceKind.Radarr, "Movie automation", null, ServiceStatus.Offline, true,
+                    DateTimeOffset.UtcNow, "Connection refused", [])
             ]);
     }
 
@@ -558,7 +605,8 @@ public sealed class CommandCenterServiceTests : IDisposable
     private sealed class RecordingOperationsService : IOperationsService
     {
         public List<MaintenanceWindow> Windows { get; } = [];
-        public Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public OperationsSnapshot Snapshot { get; set; } = CreateOperationsSnapshot([], [], [], []);
+        public Task<OperationsSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot with { Maintenance = Windows.ToArray() });
         public Task<bool> ControlDownloadAsync(DownloadControlRequest request, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ArrCommandResult> RunArrCommandAsync(ArrCommandRequest request, string actor, CancellationToken cancellationToken) => throw new NotSupportedException();
         public IReadOnlyList<MaintenanceWindow> GetMaintenance() => Windows;
@@ -577,6 +625,41 @@ public sealed class CommandCenterServiceTests : IDisposable
         }
         public Task<ServiceDiscoveryResult> DiscoverAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
     }
+
+    private sealed class StaticDashboardService(IAgentCommandStore commandStore) : IDashboardService
+    {
+        public Task<DashboardSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new DashboardSnapshot(DateTimeOffset.UtcNow,
+            [
+                new ServiceCard("plex", "Plex", ServiceKind.Plex, "Media server", null, ServiceStatus.Online, true, DateTimeOffset.UtcNow, null, []),
+                new ServiceCard("radarr", "Radarr", ServiceKind.Radarr, "Movie automation", null, ServiceStatus.Offline, true, DateTimeOffset.UtcNow, "Connection refused", [])
+            ],
+            new SystemStats("server-pc", 20, 40, [], DateTimeOffset.UtcNow),
+            [],
+            [new AgentSummary("server-pc", "server-pc", DateTimeOffset.UtcNow.AddMinutes(-2), ServiceStatus.Online, 3)],
+            [new DashboardNotification("dash-alert", NotificationSeverity.Warning, "Radarr offline", "Connection refused", DateTimeOffset.UtcNow)],
+            commandStore.GetRecentAuditEvents(10)));
+    }
+
+    private static OperationsSnapshot CreateOperationsSnapshot(
+        IReadOnlyList<OperationsActivity>? activity = null,
+        IReadOnlyList<DownloadQueueItem>? downloads = null,
+        IReadOnlyList<MaintenanceWindow>? maintenance = null,
+        IReadOnlyList<ArrQueueItem>? queue = null) =>
+        new(DateTimeOffset.UtcNow,
+            activity ??
+            [
+                new OperationsActivity("activity-1", DateTimeOffset.UtcNow, "Sonarr", "Import completed",
+                    "Episode imported successfully.", OperationsActivityKind.Media)
+            ],
+            [], [], downloads ??
+            [
+                new DownloadQueueItem("download-1", "qBittorrent", "Ubuntu.iso", "Downloading", 42,
+                    1_000_000_000, 580_000_000, 5_000_000, TimeSpan.FromMinutes(3), true, true)
+            ],
+            [], [], [], maintenance ?? [], new UpdateSummary("0.1.0", "main", new Uri("https://github.com/TrapEmAll/HomeDashboard"),
+                DateTimeOffset.UtcNow, false, null),
+            new ArrOperationsSummary([], queue ?? [], [], []));
 
     private sealed class RecordingHttpClientFactory : IHttpClientFactory
     {
@@ -610,17 +693,19 @@ public sealed class CommandCenterServiceTests : IDisposable
     private sealed class RecordingCommandStore : IAgentCommandStore
     {
         public List<AuditEvent> Events { get; } = [];
+        public List<AgentCommand> Commands { get; } = [];
         public AgentCommand? MachineCommand { get; private set; }
         public AgentCommand Enqueue(string agentId, string serviceId, RestartRequest request) => throw new NotSupportedException();
         public AgentCommand EnqueueMachine(string agentId, AgentCommandKind kind, RestartRequest request)
         {
             MachineCommand = new AgentCommand("machine-command", agentId, kind, "machine", request.RequestedBy,
                 request.Reason, DateTimeOffset.UtcNow, AgentCommandState.Queued);
+            Commands.Add(MachineCommand);
             return MachineCommand;
         }
         public AgentCommand? DequeueNext(string agentId) => null;
         public void Complete(string agentId, string commandId, AgentCommandCompletion completion) { }
-        public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => [];
+        public IReadOnlyList<AgentCommand> GetRecentCommands(int count) => Commands.TakeLast(count).ToArray();
         public IReadOnlyList<AuditEvent> GetRecentAuditEvents(int count) => Events;
         public void AddAuditEvent(AuditEvent auditEvent) => Events.Add(auditEvent);
     }
